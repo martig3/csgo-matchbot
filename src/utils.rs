@@ -56,20 +56,17 @@ pub(crate) async fn user_team(context: &Context, msg: &ApplicationCommandInterac
 pub(crate) async fn admin_check(context: &Context, inc_command: &ApplicationCommandInteraction) -> Result<String, String> {
     let data = context.data.write().await;
     let config: &Config = data.get::<Config>().unwrap();
-    if let Some(admin_role_id) = &config.discord.admin_role_id {
-        let role_name = context.cache.role(inc_command.guild_id.unwrap(), RoleId::from(*admin_role_id)).await.unwrap().name;
-        return if inc_command.user.has_role(&context.http, GuildContainer::from(inc_command.guild_id.unwrap()), RoleId::from(*admin_role_id)).await.unwrap_or(false) {
-            Ok(String::from("User has role"))
-        } else {
-            Err(MessageBuilder::new()
-                .mention(&inc_command.user)
-                .push(" this command requires the '")
-                .push(role_name)
-                .push("' role.")
-                .build())
-        };
-    }
-    Ok(String::from("Admin Role not set, allowed"))
+    let role_name = context.cache.role(inc_command.guild_id.unwrap(), RoleId::from(config.discord.admin_role_id)).await.unwrap().name;
+    return if inc_command.user.has_role(&context.http, GuildContainer::from(inc_command.guild_id.unwrap()), RoleId::from(config.discord.admin_role_id)).await.unwrap_or(false) {
+        Ok(String::from("User has role"))
+    } else {
+        Err(MessageBuilder::new()
+            .mention(&inc_command.user)
+            .push(" this command requires the '")
+            .push(role_name)
+            .push("' role.")
+            .build())
+    };
 }
 
 pub(crate) async fn get_maps(context: &Context) -> Vec<String> {
