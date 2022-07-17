@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::env;
 use std::str::FromStr;
 use chrono::{DateTime, NaiveDate, Utc};
+use diesel::{PgConnection};
 
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ use serenity::model::prelude::application_command::{ApplicationCommandInteractio
 use serenity::prelude::{EventHandler, TypeMapKey};
 use uuid::Uuid;
 use crate::SeriesType::{Bo1, Bo3, Bo5};
+use r2d2::{Pool};
+use r2d2_diesel::ConnectionManager;
 
 mod commands;
 mod utils;
@@ -26,7 +29,7 @@ struct Config {
 #[derive(Serialize, Deserialize)]
 struct DiscordConfig {
     token: String,
-    admin_role_id: Option<u64>,
+    admin_role_id: u64,
     application_id: u64,
     guild_id: u64,
 }
@@ -133,25 +136,21 @@ enum State {
 
 struct Handler;
 
-struct RiotIdCache;
-
 struct BotState;
 
 struct Maps;
 
 struct Matches;
 
+struct DBConnectionPool;
+
 
 impl TypeMapKey for Config {
     type Value = Config;
 }
 
-impl TypeMapKey for RiotIdCache {
-    type Value = HashMap<u64, String>;
-}
-
 impl TypeMapKey for BotState {
-    type Value = StateContainer;
+    type Value = State;
 }
 
 impl TypeMapKey for Maps {
@@ -164,6 +163,10 @@ impl TypeMapKey for Setup {
 
 impl TypeMapKey for Matches {
     type Value = Vec<Match>;
+}
+
+impl TypeMapKey for DBConnectionPool {
+    type Value = Pool<ConnectionManager<PgConnection>>;
 }
 
 enum Command {
@@ -228,7 +231,7 @@ impl FromStr for Command {
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, context: Context, ready: Ready) {
-        let config = read_config().await.unwrap();
+        let config = load_config().await.unwrap();
         let guild_id = GuildId(config.discord.guild_id);
         let commands = GuildId::set_application_commands(&guild_id, &context.http, |commands| {
             return commands
@@ -402,7 +405,7 @@ async fn create_int_resp(context: &Context, inc_command: &ApplicationCommandInte
 
 #[tokio::main]
 async fn main() {
-    let config = read_config().await.unwrap();
+    let config = load_config().await.unwrap();
     let token = &config.discord.token;
     let framework = StandardFramework::new();
     let mut client = Client::builder(&token)
@@ -414,8 +417,8 @@ async fn main() {
     {
         let mut data = client.data.write().await;
         data.insert::<Config>(config);
-        data.insert::<RiotIdCache>(read_riot_ids().await.unwrap());
-        data.insert::<BotState>(StateContainer { state: State::Idle });
+        data.insert::<DBConnectionPool>(get_connection_pool());
+        data.insert::<BotState>(State::Idle);
         data.insert::<Maps>(read_maps().await.unwrap());
         data.insert::<Matches>(read_matches().await.unwrap());
         data.insert::<Setup>(Setup {
@@ -436,20 +439,27 @@ async fn main() {
     }
 }
 
-async fn read_config() -> Result<Config, serde_yaml::Error> {
-    let yaml = std::fs::read_to_string("config.yaml").unwrap();
-    let config: Config = serde_yaml::from_str(&yaml)?;
-    Ok(config)
+pub fn get_connection_pool() -> Pool<ConnectionManager<PgConnection>> {
+    let database_url = env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set");
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    Pool::builder()
+        .test_on_check_out(true)
+        .max_size(15)
+        .build(manager)
+        .expect("Could not build connection pool")
 }
 
-async fn read_riot_ids() -> Result<HashMap<u64, String>, serde_json::Error> {
-    if std::fs::read("riot_ids.json").is_ok() {
-        let json_str = std::fs::read_to_string("riot_ids.json").unwrap();
-        let json = serde_json::from_str(&json_str).unwrap();
-        Ok(json)
-    } else {
-        Ok(HashMap::new())
-    }
+async fn load_config() -> Result<Config, serde_yaml::Error> {
+    let config: Config = Config {
+        discord: DiscordConfig {
+            token: option_env!("DISCORD_TOKEN").expect("DISCORD_TOKEN not defined").to_string(),
+            admin_role_id: option_env!("DISCORD_ADMIN_ROLE_ID").expect("DISCORD_ADMIN_ROLE_ID not defined").parse().unwrap(),
+            application_id: option_env!("DISCORD_APPLICATION_ID").expect("DISCORD_APPLICATION_ID not defined").parse().unwrap(),
+            guild_id: option_env!("DISCORD_GUILD_ID").expect("DISCORD_GUILD_ID not defined").parse().unwrap(),
+        }
+    };
+    Ok(config)
 }
 
 async fn read_maps() -> Result<Vec<String>, serde_json::Error> {
