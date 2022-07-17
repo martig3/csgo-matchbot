@@ -1,5 +1,7 @@
+use std::borrow::Borrow;
 use std::str::FromStr;
 use chrono::{NaiveDate, Utc};
+use regex::Regex;
 
 
 use serenity::client::Context;
@@ -8,12 +10,13 @@ use serenity::model::prelude::application_command::ApplicationCommandInteraction
 use serenity::model::prelude::Role;
 use serenity::utils::MessageBuilder;
 use uuid::Uuid;
+use match_bot::create_user;
 
-use crate::{Setup, Maps, Match, Matches, MatchState, RolePartial, ScheduleInfo, SeriesType, SetupStep, SeriesMap};
+use crate::{Setup, Maps, Match, Matches, MatchState, RolePartial, ScheduleInfo, SeriesType, SetupStep, SeriesMap, DBConnectionPool};
 use crate::MatchState::Completed;
 use crate::State::{Idle, MapVeto, SidePick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{admin_check, write_to_file, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_veto_info, print_match_info};
+use crate::utils::{admin_check, write_to_file, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_veto_info, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64};
 
 
 pub(crate) async fn handle_help(context: &Context, msg: &ApplicationCommandInteraction) -> String {
@@ -113,29 +116,6 @@ pub(crate) async fn handle_bo1_setup(_msg: &ApplicationCommandInteraction, setup
         SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
         SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
     ], format!("Best of 1 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
-}
-
-pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
-    return (vec![
-        SetupStep { step_type: Veto, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-    ], format!("Best of 3 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
-}
-
-pub(crate) async fn handle_bo5_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
-    return (vec![
-        SetupStep { step_type: Veto, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-    ], format!("Best of 5 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
 }
 
 pub(crate) async fn handle_defense_option(context: &Context, msg: &ApplicationCommandInteraction) -> String {
@@ -539,6 +519,39 @@ pub(crate) async fn handle_delete_match(context: &Context, msg: &ApplicationComm
     }
     write_to_file("matches.json", serde_json::to_string_pretty(matches).unwrap()).await;
     String::from("Successfully deleted match")
+}
+
+pub(crate) async fn handle_steam_id(context: &Context, inc_command: &ApplicationCommandInteraction) -> String {
+    let data = context.data.write().await;
+    let pool = data.get::<DBConnectionPool>().unwrap();
+    let conn = pool.get().unwrap();
+    let option = inc_command.data
+        .options
+        .get(0)
+        .expect("Expected steamid option")
+        .resolved
+        .as_ref()
+        .expect("Expected object");
+    if let ApplicationCommandInteractionDataOptionValue::String(steamid) = option {
+        let steam_id_regex = Regex::new("^STEAM_[0-5]:[01]:\\d+$").unwrap();
+        if !steam_id_regex.is_match(&steamid) {
+            return String::from(" invalid steamid formatting. Please follow this example: `/steamid STEAM_0:1:12345678`");
+        }
+        // steam_id_cache.insert(*inc_command.user.id.as_u64(), steamid.clone());
+        let steamid_64 = convert_steamid_to_64(&steamid);
+        create_user(conn.borrow(), (inc_command.user.id.0 as i64).borrow(), steamid.clone().as_str());
+        let response = MessageBuilder::new()
+            .push("Updated steamid for ")
+            .mention(&inc_command.user)
+            .push(" to `")
+            .push(&steamid)
+            .push("`\n")
+            .push_line("Your steam community profile (please double check this is correct):")
+            .push_line(format!("https://steamcommunity.com/profiles/{}", steamid_64))
+            .build();
+        return String::from(response);
+    }
+    return String::from("Discord API error");
 }
 
 pub(crate) async fn handle_cancel(context: &Context, msg: &ApplicationCommandInteraction) -> String {

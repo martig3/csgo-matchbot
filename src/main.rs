@@ -3,7 +3,6 @@ use std::str::FromStr;
 use chrono::{DateTime, NaiveDate, Utc};
 use diesel::{PgConnection};
 
-
 use serde::{Deserialize, Serialize};
 use serenity::async_trait;
 use serenity::Client;
@@ -170,6 +169,7 @@ impl TypeMapKey for DBConnectionPool {
 }
 
 enum Command {
+    SteamId,
     Setup,
     Schedule,
     Addmatch,
@@ -210,6 +210,7 @@ impl FromStr for Command {
     type Err = ();
     fn from_str(input: &str) -> Result<Command, Self::Err> {
         match input {
+            "steamid" => Ok(Command::SteamId),
             "setup" => Ok(Command::Setup),
             "schedule" => Ok(Command::Schedule),
             "addmatch" => Ok(Command::Addmatch),
@@ -249,6 +250,15 @@ impl EventHandler for Handler {
                 })
                 .create_application_command(|command| {
                     command.name("help").description("DM yourself help info")
+                })
+                .create_application_command(|command| {
+                    command.name("steamid").description("Set your steamID").create_option(|option| {
+                        option
+                            .name("steamid")
+                            .description("Your steamID, i.e. STEAM_0:1:12345678")
+                            .kind(ApplicationCommandOptionType::String)
+                            .required(true)
+                    })
                 })
                 .create_application_command(|command| {
                     command.name("match").description("Show matches").create_option(|option| {
@@ -373,6 +383,7 @@ impl EventHandler for Handler {
         if let Interaction::ApplicationCommand(inc_command) = interaction {
             let command = Command::from_str(&inc_command.data.name.as_str().to_lowercase()).expect("Expected valid command");
             let content: String = match command {
+                Command::SteamId => commands::handle_steam_id(&context, &inc_command).await,
                 Command::Setup => commands::handle_setup(&context, &inc_command).await,
                 Command::Addmatch => commands::handle_add_match(&context, &inc_command).await,
                 Command::Deletematch => commands::handle_delete_match(&context, &inc_command).await,

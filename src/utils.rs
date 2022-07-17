@@ -2,15 +2,23 @@ use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::prelude::application_command::{ApplicationCommandInteraction};
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
-use crate::{Bo3, Config, Maps, Match, Matches, RolePartial, Setup, SetupInfo, State};
+use crate::{Bo3, Config, Maps, Match, Matches, RolePartial, Setup, SetupInfo, SetupStep, State};
 use crate::MatchState::Completed;
-use crate::StepType::Veto;
+use crate::StepType::{Pick, Veto};
 
 pub(crate) async fn write_to_file(path: &str, content: String) {
     let mut error_string = String::from("Error writing to ");
     error_string.push_str(path);
     std::fs::write(path, content)
         .expect(&error_string);
+}
+
+pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
+    let steamid_split: Vec<&str> = steamid.split(":").collect();
+    let y = steamid_split[1].parse::<i64>().unwrap();
+    let z = steamid_split[2].parse::<i64>().unwrap();
+    let steamid_64 = (z * 2) + y + 76561197960265728;
+    return steamid_64 as u64;
 }
 
 pub(crate) async fn find_user_team_role(all_guild_roles: Vec<Role>, user: &User, context: &&Context) -> Result<Role, String> {
@@ -138,6 +146,28 @@ pub(crate) fn eos_printout(setup: Setup) -> String {
     resp
 }
 
+pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+    return (vec![
+        SetupStep { step_type: Veto, team: setup.clone().team_one.unwrap(), map: None },
+        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
+        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
+    ], format!("Best of 3 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
+}
+
+pub(crate) async fn handle_bo5_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+    return (vec![
+        SetupStep { step_type: Veto, team: setup.clone().team_one.unwrap(), map: None },
+        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
+        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
+    ], format!("Best of 5 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
+}
 pub(crate) fn reset_setup(setup: &mut Setup, maps: Vec<String>) {
     setup.team_one = None;
     setup.team_two = None;
