@@ -13,7 +13,7 @@ use serenity::utils::MessageBuilder;
 use match_bot::{create_match, create_user, delete_match, get_match, get_match_setup_steps, get_matches, get_next_team_match, update_match_schedule};
 use match_bot::models::{Match, MatchState, NewMatch, SeriesType};
 
-use crate::{Setup, Maps, DBConnectionPool, SetupMap};
+use crate::{Setup, Maps, SetupMap};
 use crate::State::{Idle, MapVeto, SidePick};
 use crate::StepType::{Pick, Veto};
 use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info};
@@ -25,8 +25,8 @@ pub(crate) async fn handle_help(context: &Context, msg: &ApplicationCommandInter
 `/schedule` - schedule match
 `/matches` - list matches
 `/maps` - list maps
-`/defense` - pick defense side during side pick phase
-`/attack`- pick attack side during side pick phase
+`/ct` - pick CT side during side pick phase
+`/t`- pick T side during side pick phase
 `/pick` - pick map during map veto phase
 `/ban` - ban map during map veto phase
 `/help` - DMs you help text
@@ -475,9 +475,7 @@ pub(crate) async fn handle_delete_match(context: &Context, msg: &ApplicationComm
 }
 
 pub(crate) async fn handle_steam_id(context: &Context, inc_command: &ApplicationCommandInteraction) -> String {
-    let data = context.data.write().await;
-    let pool = data.get::<DBConnectionPool>().unwrap();
-    let conn = pool.get().unwrap();
+    let conn = get_pg_conn(&context).await;
     let option = inc_command.data
         .options
         .get(0)
@@ -488,9 +486,8 @@ pub(crate) async fn handle_steam_id(context: &Context, inc_command: &Application
     if let ApplicationCommandInteractionDataOptionValue::String(steamid) = option {
         let steam_id_regex = Regex::new("^STEAM_[0-5]:[01]:\\d+$").unwrap();
         if !steam_id_regex.is_match(&steamid) {
-            return String::from(" invalid steamid formatting. Please follow this example: `/steamid STEAM_0:1:12345678`");
+            return String::from(" invalid Steam ID input format. Please follow this example: `STEAM_0:1:12345678`");
         }
-        // steam_id_cache.insert(*inc_command.user.id.as_u64(), steamid.clone());
         let steamid_64 = convert_steamid_to_64(&steamid);
         create_user(conn.borrow(), &(inc_command.user.id.0 as i64), steamid.clone().as_str());
         let response = MessageBuilder::new()
