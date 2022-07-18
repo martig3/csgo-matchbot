@@ -1,17 +1,15 @@
+use diesel::PgConnection;
+use r2d2::{PooledConnection};
+use r2d2_diesel::ConnectionManager;
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::prelude::application_command::{ApplicationCommandInteraction};
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
-use crate::{Bo3, Config, Maps, Match, Matches, RolePartial, Setup, SetupInfo, SetupStep, State};
-use crate::MatchState::Completed;
+use match_bot::{create_match_setup_steps, create_series_maps, update_match_state};
+use match_bot::models::MatchState::Completed;
+use match_bot::models::{MatchSetupStep, NewMatchSetupStep, NewSeriesMap};
+use crate::{Bo3, Config, DBConnectionPool, Maps, Match, Setup, SetupStep, State};
 use crate::StepType::{Pick, Veto};
-
-pub(crate) async fn write_to_file(path: &str, content: String) {
-    let mut error_string = String::from("Error writing to ");
-    error_string.push_str(path);
-    std::fs::write(path, content)
-        .expect(&error_string);
-}
 
 pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
     let steamid_split: Vec<&str> = steamid.split(":").collect();
@@ -38,8 +36,10 @@ pub(crate) async fn is_phase_allowed(context: &Context, msg: &ApplicationCommand
     if setup.current_phase != state {
         return Err(String::from("It is not the correct phase"));
     }
-    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), setup.clone().team_one.unwrap().id).await {
-        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), setup.clone().team_two.unwrap().id).await {
+    let role_one = RoleId::from(setup.clone().team_one.unwrap() as u64).0;
+    let role_two = RoleId::from(setup.clone().team_two.unwrap() as u64).0;
+    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_one).await {
+        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_two).await {
             if !has_role_one && !has_role_two {
                 return Err(String::from("You are not part of either team currently running `/setup`"));
             }
@@ -49,13 +49,15 @@ pub(crate) async fn is_phase_allowed(context: &Context, msg: &ApplicationCommand
 }
 
 
-pub(crate) async fn user_team(context: &Context, msg: &ApplicationCommandInteraction) -> Result<RolePartial, String> {
+pub(crate) async fn user_team(context: &Context, msg: &ApplicationCommandInteraction) -> Result<u64, String> {
     let mut data = context.data.write().await;
     let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), setup.clone().team_one.unwrap().id).await {
-        if has_role_one { return Ok(setup.clone().team_one.unwrap()); }
-        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), setup.clone().team_two.unwrap().id).await {
-            if has_role_two { return Ok(setup.clone().team_two.unwrap()); }
+    let role_one = RoleId::from(setup.clone().team_one.unwrap() as u64).0;
+    let role_two = RoleId::from(setup.clone().team_two.unwrap() as u64).0;
+    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_one).await {
+        if has_role_one { return Ok(role_one); }
+        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_two).await {
+            if has_role_two { return Ok(role_two); }
         }
     }
     Err(String::from("You are not part of either team currently running `/setup`"))
@@ -83,17 +85,42 @@ pub(crate) async fn get_maps(context: &Context) -> Vec<String> {
     maps.clone()
 }
 
+pub(crate) async fn get_setup(context: &Context) -> Setup {
+    let data = context.data.write().await;
+    let setup_final: Setup = data.get::<Setup>().unwrap().clone();
+    setup_final
+}
+
 pub(crate) async fn finish_setup(context: &Context) {
     let maps = get_maps(context).await;
     {
-        let mut data = context.data.write().await;
-        let setup_final: Setup = data.get::<Setup>().unwrap().clone();
-        if let Some(matches) = data.get_mut::<Matches>() {
-            let match_index = matches.iter().position(|m| m.id == setup_final.match_id.unwrap());
-            matches[match_index.unwrap()].setup_info = Some(SetupInfo { series_type: setup_final.series_type, maps: setup_final.maps, vetos: setup_final.veto_pick_order });
-            matches[match_index.unwrap()].match_state = Completed;
-            write_to_file("matches.json", serde_json::to_string_pretty(&matches).unwrap()).await;
+        let setup_final = get_setup(context).await;
+        let mut match_setup_steps: Vec<NewMatchSetupStep> = Vec::new();
+        let match_id = setup_final.match_id.unwrap();
+        for v in setup_final.veto_pick_order {
+            let step = NewMatchSetupStep {
+                match_id: &match_id,
+                step_type: &Veto,
+                team_role_id: v.team_role_id,
+                map: Option::from(v.map.unwrap()),
+            };
+            match_setup_steps.push(step);
         }
+        let mut series_maps: Vec<NewSeriesMap> = Vec::new();
+        let match_id = setup_final.match_id.unwrap();
+        for m in setup_final.maps {
+            let step = NewSeriesMap {
+                match_id: &match_id,
+                map: m.map,
+                start_attack_team_role_id: m.start_attack_team_role_id,
+                start_defense_team_role_id: m.start_defense_team_role_id,
+            };
+            series_maps.push(step);
+        }
+        let conn = get_pg_conn(&context).await;
+        create_match_setup_steps(&conn, match_setup_steps);
+        create_series_maps(&conn, series_maps);
+        update_match_state(&conn, match_id, Completed);
     }
     {
         let mut data = context.data.write().await;
@@ -103,18 +130,19 @@ pub(crate) async fn finish_setup(context: &Context) {
 }
 
 
-pub(crate) fn print_veto_info(m: &Match) -> String {
-    if m.setup_info.is_none() || m.setup_info.clone().unwrap().vetos.is_empty() {
-        return String::from("This match has no veto info yet");
+pub(crate) fn print_veto_info(setup_info: Vec<MatchSetupStep>, m: &Match) -> String {
+    if setup_info.is_empty() {
+        return String::from("_This match has no veto info yet_");
     }
     let mut resp = String::from("```diff\n");
-    let veto: String = m.setup_info.clone().unwrap().vetos.iter()
+    let veto: String = setup_info.clone().iter()
         .map(|v| {
             let mut veto_str = String::new();
+            let team_name = if m.team_one_role_id == v.team_role_id { &m.team_one_name } else { &m.team_two_name };
             if v.step_type == Veto {
-                veto_str.push_str(format!("- {} banned {}\n", v.team.name, v.map.clone().unwrap().to_uppercase()).as_str());
+                veto_str.push_str(format!("- {} banned {}\n", team_name, v.map.clone().unwrap().to_uppercase()).as_str());
             } else {
-                veto_str.push_str(format!("+ {} picked {}\n", v.team.name, v.map.clone().unwrap().to_uppercase()).as_str());
+                veto_str.push_str(format!("+ {} picked {}\n", team_name, v.map.clone().unwrap().to_uppercase()).as_str());
             }
             veto_str
         }).collect();
@@ -125,49 +153,65 @@ pub(crate) fn print_veto_info(m: &Match) -> String {
 
 pub(crate) fn print_match_info(m: &Match, show_id: bool) -> String {
     let mut schedule_str = String::new();
-    if let Some(schedule) = &m.schedule_info {
-        schedule_str = format!(" > Scheduled: `{} @ {}`", schedule.date.format("%m/%d/%Y").to_string().as_str(), schedule.time_str.as_str());
+    if let Some(schedule) = &m.scheduled_time_str {
+        schedule_str = format!(" > Scheduled: `{}`", schedule);
     }
     let mut row = String::new();
-    row.push_str(format!("- {} vs {}{}", m.team_one.name, m.team_two.name, schedule_str).as_str());
+    row.push_str(format!("- {} vs {}{}", m.team_one_name, m.team_two_name, schedule_str).as_str());
     if m.note.is_some() {
         row.push_str(format!(" `{}`", m.note.clone().unwrap()).as_str());
     }
     row.push('\n');
-    if show_id { row.push_str(format!("    Match ID: `{}\n`", m.id).as_str()) }
+    if show_id { row.push_str(format!("    _Match ID:_ `{}\n`", m.id).as_str()) }
     row
 }
 
 pub(crate) fn eos_printout(setup: Setup) -> String {
     let mut resp = String::from("\n\nSetup is completed. GLHF!\n\n");
     for (i, el) in setup.maps.iter().enumerate() {
-        resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _Defense start:_ <@&{}>\n    _Attack start:_ <@&{}>\n\n", i + 1, el.map.to_uppercase(), &el.picked_by.id, el.start_defense.clone().unwrap().id, el.start_attack.clone().unwrap().id).as_str())
+        resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _Defense start:_ <@&{}>\n    _Attack start:_ <@&{}>\n\n", i + 1, el.map.to_uppercase(), &el.picked_by, el.start_defense_team_role_id.clone().unwrap(), el.start_attack_team_role_id.clone().unwrap()).as_str())
     }
     resp
 }
 
-pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+
+pub(crate) async fn handle_bo1_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+    let match_id = setup.match_id.unwrap();
     return (vec![
-        SetupStep { step_type: Veto, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-    ], format!("Best of 3 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+    ], format!("Best of 1 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap()));
+}
+
+pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+    let match_id = setup.match_id.unwrap();
+    return (vec![
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+    ], format!("Best of 3 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap()));
 }
 
 pub(crate) async fn handle_bo5_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+    let match_id = setup.match_id.unwrap();
     return (vec![
-        SetupStep { step_type: Veto, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Veto, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_two.unwrap(), map: None },
-        SetupStep { step_type: Pick, team: setup.clone().team_one.unwrap(), map: None },
-    ], format!("Best of 5 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap().id));
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
+        SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
+    ], format!("Best of 5 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap()));
 }
+
 pub(crate) fn reset_setup(setup: &mut Setup, maps: Vec<String>) {
     setup.team_one = None;
     setup.team_two = None;
@@ -179,4 +223,10 @@ pub(crate) fn reset_setup(setup: &mut Setup, maps: Vec<String>) {
     setup.veto_pick_order = Vec::new();
     setup.current_step = 0;
     setup.current_phase = State::Idle;
+}
+
+pub(crate) async fn get_pg_conn(context: &Context) -> PooledConnection<ConnectionManager<PgConnection>> {
+    let data = context.data.write().await;
+    let pool = data.get::<DBConnectionPool>().unwrap();
+    pool.get().unwrap()
 }

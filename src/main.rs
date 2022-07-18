@@ -1,6 +1,5 @@
 use std::env;
 use std::str::FromStr;
-use chrono::{DateTime, NaiveDate, Utc};
 use diesel::{PgConnection};
 
 use serde::{Deserialize, Serialize};
@@ -9,13 +8,13 @@ use serenity::Client;
 use serenity::client::Context;
 use serenity::framework::standard::StandardFramework;
 use serenity::model::guild::Role;
-use serenity::model::prelude::{GuildId, Interaction, InteractionResponseType, Ready, RoleId};
+use serenity::model::prelude::{GuildId, Interaction, InteractionResponseType, Ready};
 use serenity::model::prelude::application_command::{ApplicationCommandInteraction, ApplicationCommandOptionType};
 use serenity::prelude::{EventHandler, TypeMapKey};
-use uuid::Uuid;
-use crate::SeriesType::{Bo1, Bo3, Bo5};
+use crate::SeriesType::Bo3;
 use r2d2::{Pool};
 use r2d2_diesel::ConnectionManager;
+use match_bot::models::{Match, SeriesType, StepType};
 
 mod commands;
 mod utils;
@@ -39,87 +38,37 @@ struct StateContainer {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct SeriesMap {
-    map: String,
-    picked_by: RolePartial,
-    start_attack: Option<RolePartial>,
-    start_defense: Option<RolePartial>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
 struct Veto {
     map: String,
     vetoed_by: Role,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
-enum MatchState {
-    Entered,
-    Scheduled,
-    Completed,
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-struct RolePartial {
-    id: RoleId,
-    name: String,
-    guild_id: GuildId,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SetupStep {
+    pub match_id: i32,
+    pub step_type: StepType,
+    pub team_role_id: i64,
+    pub map: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct ScheduleInfo {
-    date: NaiveDate,
-    time_str: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct SetupInfo {
-    series_type: SeriesType,
-    maps: Vec<SeriesMap>,
-    vetos: Vec<SetupStep>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct Match {
-    id: Uuid,
-    team_one: RolePartial,
-    team_two: RolePartial,
-    note: Option<String>,
-    date_added: DateTime<Utc>,
-    match_state: MatchState,
-    schedule_info: Option<ScheduleInfo>,
-    setup_info: Option<SetupInfo>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-enum SeriesType {
-    Bo1,
-    Bo3,
-    Bo5,
-}
-
-#[derive(PartialEq, Clone, Serialize, Deserialize)]
-enum StepType {
-    Veto,
-    Pick,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct SetupStep {
-    step_type: StepType,
-    team: RolePartial,
-    map: Option<String>,
+pub struct SetupMap {
+    pub match_id: i32,
+    pub map: String,
+    pub picked_by: i64,
+    pub start_attack_team_role_id: Option<i64>,
+    pub start_defense_team_role_id: Option<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Setup {
-    team_one: Option<RolePartial>,
-    team_two: Option<RolePartial>,
+    team_one: Option<i64>,
+    team_two: Option<i64>,
     maps_remaining: Vec<String>,
-    maps: Vec<SeriesMap>,
+    maps: Vec<SetupMap>,
     vetoes: Vec<Veto>,
     series_type: SeriesType,
-    match_id: Option<Uuid>,
+    match_id: Option<i32>,
     veto_pick_order: Vec<SetupStep>,
     current_step: usize,
     current_phase: State,
@@ -185,27 +134,6 @@ enum Command {
     Help,
 }
 
-impl FromStr for SeriesType {
-    type Err = ();
-    fn from_str(input: &str) -> Result<SeriesType, Self::Err> {
-        match input {
-            "bo1" => Ok(Bo1),
-            "bo3" => Ok(Bo3),
-            "bo5" => Ok(Bo5),
-            _ => Err(()),
-        }
-    }
-}
-
-impl ToString for StepType {
-    fn to_string(&self) -> String {
-        String::from(match &self {
-            StepType::Veto => "/ban",
-            StepType::Pick => "/pick",
-        })
-    }
-}
-
 impl FromStr for Command {
     type Err = ();
     fn from_str(input: &str) -> Result<Command, Self::Err> {
@@ -261,7 +189,7 @@ impl EventHandler for Handler {
                     })
                 })
                 .create_application_command(|command| {
-                    command.name("match").description("Show matches").create_option(|option| {
+                    command.name("match").description("Show match info").create_option(|option| {
                         option
                             .name("matchid")
                             .description("Match ID")
@@ -290,21 +218,12 @@ impl EventHandler for Handler {
                         option
                             .name("matchid")
                             .description("Match ID")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(ApplicationCommandOptionType::Integer)
                             .required(true)
                     })
                 })
                 .create_application_command(|command| {
-                    command.name("setup").description("Setup your next match").create_option(|option| {
-                        option
-                            .name("type")
-                            .description("Series Type")
-                            .kind(ApplicationCommandOptionType::String)
-                            .required(true)
-                            .add_string_choice("Best of 1", "bo1")
-                            .add_string_choice("Best of 3", "bo3")
-                            .add_string_choice("Best of 5", "bo5")
-                    })
+                    command.name("setup").description("Setup your next match")
                 })
                 .create_application_command(|command| {
                     command.name("pick").description("Pick a map during the map veto").create_option(|option| {
@@ -353,6 +272,15 @@ impl EventHandler for Handler {
                             .required(true)
                     }).create_option(|option| {
                         option
+                            .name("type")
+                            .description("Series Type")
+                            .kind(ApplicationCommandOptionType::String)
+                            .required(true)
+                            .add_string_choice("Best of 1", "bo1")
+                            .add_string_choice("Best of 3", "bo3")
+                            .add_string_choice("Best of 5", "bo5")
+                    }).create_option(|option| {
+                        option
                             .name("note")
                             .description("Note")
                             .kind(ApplicationCommandOptionType::String)
@@ -363,13 +291,7 @@ impl EventHandler for Handler {
                     command.name("schedule").description("Schedule your next match").create_option(|option| {
                         option
                             .name("date")
-                            .description("Date (Month/Day/Year)")
-                            .kind(ApplicationCommandOptionType::String)
-                            .required(true)
-                    }).create_option(|option| {
-                        option
-                            .name("time")
-                            .description("Time (include timezone) i.e. 10EST")
+                            .description("Date (Month/Day/Year) @ Time <Timezone>")
                             .kind(ApplicationCommandOptionType::String)
                             .required(true)
                     })
@@ -430,14 +352,12 @@ async fn main() {
         data.insert::<Config>(config);
         data.insert::<DBConnectionPool>(get_connection_pool());
         data.insert::<BotState>(State::Idle);
-        data.insert::<Maps>(read_maps().await.unwrap());
-        data.insert::<Matches>(read_matches().await.unwrap());
         data.insert::<Setup>(Setup {
             team_one: None,
             team_two: None,
             maps: Vec::new(),
             vetoes: Vec::new(),
-            maps_remaining: read_maps().await.unwrap(),
+            maps_remaining: Vec::new(),
             series_type: Bo3,
             match_id: None,
             veto_pick_order: Vec::new(),
@@ -472,25 +392,3 @@ async fn load_config() -> Result<Config, serde_yaml::Error> {
     };
     Ok(config)
 }
-
-async fn read_maps() -> Result<Vec<String>, serde_json::Error> {
-    if std::fs::read("maps.json").is_ok() {
-        let json_str = std::fs::read_to_string("maps.json").unwrap();
-        let json = serde_json::from_str(&json_str).unwrap();
-        Ok(json)
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-async fn read_matches() -> Result<Vec<Match>, serde_json::Error> {
-    if std::fs::read("matches.json").is_ok() {
-        let json_str = std::fs::read_to_string("matches.json").unwrap();
-        let json = serde_json::from_str(&json_str).unwrap();
-        Ok(json)
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-
