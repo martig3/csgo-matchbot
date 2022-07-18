@@ -3,11 +3,12 @@ extern crate diesel;
 
 use diesel::{BoolExpressionMethods, EqAll, OptionalExtension, PgConnection, QueryDsl, RunQueryDsl};
 use diesel::associations::HasTable;
-use crate::models::{Match, MatchSetupStep, MatchState, NewMatch, NewMatchSetupStep, NewSeriesMap};
+use crate::models::{Map, Match, MatchSetupStep, MatchState, NewMatch, NewMatchSetupStep, NewSeriesMap};
 use crate::schema::matches::dsl::matches;
 use self::models::{User, NewUser};
 use crate::diesel::ExpressionMethods;
 use crate::MatchState::Completed;
+use crate::schema::maps::dsl::maps;
 use crate::schema::matches::{match_state, scheduled_time_str};
 
 pub mod schema;
@@ -113,4 +114,10 @@ pub fn create_series_maps<'a>(conn: &PgConnection, new_series_maps: Vec<NewSerie
         .values(&new_series_maps)
         .execute(conn)
         .expect("Error saving new setup step")
+}
+
+pub fn get_map_pool<'a>(conn: &PgConnection) -> Vec<Map> {
+    maps
+        .load::<Map>(conn)
+        .expect("Expected match result")
 }

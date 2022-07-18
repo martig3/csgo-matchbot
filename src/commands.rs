@@ -13,7 +13,7 @@ use serenity::utils::MessageBuilder;
 use match_bot::{create_match, create_user, delete_match, get_match, get_match_setup_steps, get_matches, get_next_team_match, update_match_schedule};
 use match_bot::models::{Match, MatchState, NewMatch, SeriesType};
 
-use crate::{Setup, Maps, SetupMap};
+use crate::{Setup, SetupMap};
 use crate::State::{Idle, MapVeto, SidePick};
 use crate::StepType::{Pick, Veto};
 use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info};
@@ -68,15 +68,17 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
         return String::from("Your team does not have any scheduled matches");
     }
     let current_match = next_match.unwrap();
+    let maps: Vec<String> = get_maps(&context).await;
     let mut data = context.data.write().await;
     let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
+    setup.maps_remaining = maps;
     setup.series_type = current_match.series_type;
     setup.team_one = Some(current_match.team_one_role_id.clone());
     setup.team_two = Some(current_match.team_two_role_id.clone());
     setup.match_id = Some(current_match.id);
     setup.current_step = 0;
     setup.current_phase = MapVeto;
-    let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_uppercase())).collect();
+    let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
     let mut result = match current_match.series_type {
         SeriesType::Bo1 => { handle_bo1_setup(msg, setup.clone()).await }
         SeriesType::Bo3 => { handle_bo3_setup(msg, setup.clone()).await }
@@ -112,11 +114,11 @@ pub(crate) async fn handle_defense_option(context: &Context, msg: &ApplicationCo
             } else {
                 setup.clone().team_two.unwrap() as i64
             };
-            resp = format!("<@&{}> picked to start `defense` on `{}`. It is now <@&{}>'s turn to pick starting side on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_uppercase(), next_pick, setup.maps[setup.current_step + 1].map.to_uppercase());
+            resp = format!("<@&{}> picked to start `defense` on `{}`. It is now <@&{}>'s turn to pick starting side on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase(), next_pick, setup.maps[setup.current_step + 1].map.to_lowercase());
             setup.current_step += 1;
             return resp;
         } else {
-            resp = format!("<@&{}> picked to start `attack` on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_uppercase());
+            resp = format!("<@&{}> picked to start `attack` on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase());
             resp.push_str(eos_printout(setup.clone()).as_str());
         };
     }
@@ -151,11 +153,11 @@ pub(crate) async fn handle_attack_option(context: &Context, msg: &ApplicationCom
             } else {
                 setup.clone().team_two
             };
-            resp = format!("<@&{}> picked to start `attack` on `{}`. It is now <@&{}>'s turn to pick starting side on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_uppercase(), next_pick.unwrap(), setup.maps[setup.current_step + 1].map.to_uppercase());
+            resp = format!("<@&{}> picked to start `attack` on `{}`. It is now <@&{}>'s turn to pick starting side on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase(), next_pick.unwrap(), setup.maps[setup.current_step + 1].map.to_lowercase());
             setup.current_step += 1;
             return resp;
         } else {
-            resp = format!("<@&{}> picked to start `attack` on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_uppercase());
+            resp = format!("<@&{}> picked to start `attack` on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase());
             resp.push_str(eos_printout(setup.clone()).as_str());
         };
     }
@@ -206,15 +208,15 @@ pub(crate) async fn handle_pick_option(context: &Context, msg: &ApplicationComma
                 start_attack_team_role_id: None,
                 start_defense_team_role_id: None,
             });
-            let mut resp = format!("<@&{}> picked `{}`. Maps remaining:\n", &picked_by_team, map.to_uppercase());
-            let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_uppercase())).collect();
+            let mut resp = format!("<@&{}> picked `{}`. Maps remaining:\n", &picked_by_team, map.to_lowercase());
+            let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
             resp.push_str(map_str.as_str());
             setup.current_step += 1;
             if setup.current_step >= setup.veto_pick_order.len() {
                 setup.current_phase = SidePick;
-                resp = format!("<@&{}> picked `{}`. Map veto has concluded.\n\nTeams will now pick starting sides.\n", &picked_by_team, map.to_uppercase());
+                resp = format!("<@&{}> picked `{}`. Map veto has concluded.\n\nTeams will now pick starting sides.\n", &picked_by_team, map.to_lowercase());
                 setup.current_step = 0;
-                resp.push_str(format!("It is <@&{}>'s turn to pick starting side for `{}`\nUse `/attack` or `/defense` to select starting side", setup.clone().team_two.unwrap(), setup.maps[0].map.to_uppercase()).as_str());
+                resp.push_str(format!("It is <@&{}>'s turn to pick starting side for `{}`\nUse `/t` or `/ct` to select starting side", setup.clone().team_two.unwrap(), setup.maps[0].map.to_lowercase()).as_str());
                 return resp;
             }
             resp.push_str(format!("It is <@&{}>'s turn to `{}`", setup.veto_pick_order[setup.current_step].team_role_id, setup.veto_pick_order[setup.current_step].step_type.to_string()).as_str());
@@ -257,14 +259,14 @@ pub(crate) async fn handle_ban_option(context: &Context, msg: &ApplicationComman
             setup.maps_remaining.remove(map_index);
             let banned_by_team = setup.veto_pick_order[setup.current_step].team_role_id.clone();
             let mut resp = format!("<@&{}> banned `{}`. Maps remaining:\n", &banned_by_team, map);
-            let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_uppercase())).collect();
+            let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
             resp.push_str(map_str.as_str());
             setup.current_step += 1;
             if setup.current_step >= setup.veto_pick_order.len() {
                 setup.current_phase = SidePick;
                 setup.current_step = 0;
                 resp = String::from("Map veto has concluded. Teams will now pick starting sides. \n");
-                resp.push_str(format!("It is <@&{}>'s turn to pick starting side for `{}`\nUse `/attack` or `/defense` to select starting side", setup.clone().team_two.unwrap(), setup.maps[0].map.to_uppercase()).as_str());
+                resp.push_str(format!("It is <@&{}>'s turn to pick starting side for `{}`\nUse `/t` or `/ct` to select starting side", setup.clone().team_two.unwrap(), setup.maps[0].map.to_lowercase()).as_str());
                 return resp;
             }
             resp.push_str(format!("It is <@&{}>'s turn to `{}`", setup.veto_pick_order[setup.current_step].team_role_id, setup.veto_pick_order[setup.current_step].step_type.to_string()).as_str());
@@ -275,8 +277,7 @@ pub(crate) async fn handle_ban_option(context: &Context, msg: &ApplicationComman
 }
 
 pub(crate) async fn handle_map_list(context: &Context) -> String {
-    let data = context.data.write().await;
-    let maps: &Vec<String> = data.get::<Maps>().unwrap();
+    let maps: Vec<String> = get_maps(&context).await;
     let map_str: String = maps.iter().map(|map| format!("- `{}`\n", map)).collect();
     return MessageBuilder::new()
         .push_line("Current map pool:")

@@ -5,9 +5,10 @@ use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::prelude::application_command::{ApplicationCommandInteraction};
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
-use match_bot::{create_match_setup_steps, create_series_maps, update_match_state};
+use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, update_match_state};
 use match_bot::models::MatchState::Completed;
 use match_bot::models::{MatchSetupStep, NewMatchSetupStep, NewSeriesMap};
+use match_bot::schema::series_map::map;
 use crate::{Bo3, Config, DBConnectionPool, Maps, Match, Setup, SetupStep, State};
 use crate::StepType::{Pick, Veto};
 
@@ -80,9 +81,9 @@ pub(crate) async fn admin_check(context: &Context, inc_command: &ApplicationComm
 }
 
 pub(crate) async fn get_maps(context: &Context) -> Vec<String> {
-    let data = context.data.write().await;
-    let maps: &Vec<String> = data.get::<Maps>().unwrap();
-    maps.clone()
+    let conn = get_pg_conn(&context).await;
+    let map_pool = get_map_pool(&conn);
+    map_pool.into_iter().map(|m| m.name).collect()
 }
 
 pub(crate) async fn get_setup(context: &Context) -> Setup {
@@ -100,7 +101,7 @@ pub(crate) async fn finish_setup(context: &Context) {
         for v in setup_final.veto_pick_order {
             let step = NewMatchSetupStep {
                 match_id: &match_id,
-                step_type: &Veto,
+                step_type: v.step_type.clone(),
                 team_role_id: v.team_role_id,
                 map: Option::from(v.map.unwrap()),
             };
@@ -112,6 +113,7 @@ pub(crate) async fn finish_setup(context: &Context) {
             let step = NewSeriesMap {
                 match_id: &match_id,
                 map: m.map,
+                picked_by_role_id: m.picked_by,
                 start_attack_team_role_id: m.start_attack_team_role_id,
                 start_defense_team_role_id: m.start_defense_team_role_id,
             };
@@ -140,9 +142,9 @@ pub(crate) fn print_veto_info(setup_info: Vec<MatchSetupStep>, m: &Match) -> Str
             let mut veto_str = String::new();
             let team_name = if m.team_one_role_id == v.team_role_id { &m.team_one_name } else { &m.team_two_name };
             if v.step_type == Veto {
-                veto_str.push_str(format!("- {} banned {}\n", team_name, v.map.clone().unwrap().to_uppercase()).as_str());
+                veto_str.push_str(format!("- {} banned {}\n", team_name, v.map.clone().unwrap().to_lowercase()).as_str());
             } else {
-                veto_str.push_str(format!("+ {} picked {}\n", team_name, v.map.clone().unwrap().to_uppercase()).as_str());
+                veto_str.push_str(format!("+ {} picked {}\n", team_name, v.map.clone().unwrap().to_lowercase()).as_str());
             }
             veto_str
         }).collect();
@@ -169,7 +171,7 @@ pub(crate) fn print_match_info(m: &Match, show_id: bool) -> String {
 pub(crate) fn eos_printout(setup: Setup) -> String {
     let mut resp = String::from("\n\nSetup is completed. GLHF!\n\n");
     for (i, el) in setup.maps.iter().enumerate() {
-        resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _Defense start:_ <@&{}>\n    _Attack start:_ <@&{}>\n\n", i + 1, el.map.to_uppercase(), &el.picked_by, el.start_defense_team_role_id.clone().unwrap(), el.start_attack_team_role_id.clone().unwrap()).as_str())
+        resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _Defense start:_ <@&{}>\n    _Attack start:_ <@&{}>\n\n", i + 1, el.map.to_lowercase(), &el.picked_by, el.start_defense_team_role_id.clone().unwrap(), el.start_attack_team_role_id.clone().unwrap()).as_str())
     }
     resp
 }
@@ -184,7 +186,7 @@ pub(crate) async fn handle_bo1_setup(_msg: &ApplicationCommandInteraction, setup
         SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
         SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
         SetupStep { match_id, step_type: Pick, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
-    ], format!("Best of 1 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap()));
+    ], format!("Best of 1 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_two.unwrap()));
 }
 
 pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {

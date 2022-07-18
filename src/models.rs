@@ -64,7 +64,7 @@ pub struct MatchSetupStep {
 #[table_name = "match_setup_step"]
 pub struct NewMatchSetupStep<'a> {
     pub match_id: &'a i32,
-    pub step_type: &'a StepType,
+    pub step_type: StepType,
     pub team_role_id: i64,
     pub map: Option<String>,
 }
@@ -74,7 +74,7 @@ pub struct SeriesMap {
     pub id: i32,
     pub match_id: i32,
     pub map: String,
-    pub picked_by: i64,
+    pub picked_by_role_id: i64,
     pub start_attack_team_role_id: Option<i64>,
     pub start_defense_team_role_id: Option<i64>,
 }
@@ -84,8 +84,14 @@ pub struct SeriesMap {
 pub struct NewSeriesMap<'a> {
     pub match_id: &'a i32,
     pub map: String,
+    pub picked_by_role_id: i64,
     pub start_attack_team_role_id: Option<i64>,
     pub start_defense_team_role_id: Option<i64>,
+}
+
+#[derive(Queryable, Clone, Serialize, Deserialize)]
+pub struct Map {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsExpression, FromSqlRow, DbEnum, Serialize, Deserialize)]

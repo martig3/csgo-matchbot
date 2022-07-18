@@ -1,4 +1,10 @@
 table! {
+    maps (name) {
+        name -> Varchar,
+    }
+}
+
+table! {
     match_setup_step (id) {
         id -> Int4,
         match_id -> Int4,
@@ -46,6 +52,7 @@ joinable!(match_setup_step -> matches (match_id));
 joinable!(series_map -> matches (match_id));
 
 allow_tables_to_appear_in_same_query!(
+    maps,
     match_setup_step,
     matches,
     series_map,
