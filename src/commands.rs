@@ -1,22 +1,25 @@
 use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::str::FromStr;
+use async_std::prelude::StreamExt;
 use chrono::{Local};
 use regex::Regex;
 
-
 use serenity::client::Context;
-use serenity::model::interactions::application_command::ApplicationCommandInteraction;
-use serenity::model::prelude::application_command::ApplicationCommandInteractionDataOptionValue;
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::application::interaction::InteractionResponseType;
+use serenity::model::channel::Message;
+use serenity::model::prelude::interaction::application_command::CommandDataOptionValue;
 use serenity::model::prelude::Role;
 use serenity::utils::MessageBuilder;
 use match_bot::{create_match, create_user, delete_match, get_match, get_match_setup_steps, get_matches, get_next_team_match, update_match_schedule};
 use match_bot::models::{Match, MatchState, NewMatch, SeriesType};
 
-use crate::{Setup, SetupMap};
+use crate::Setup;
+use crate::SetupMap;
 use crate::State::{Idle, MapVeto, SidePick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info};
+use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info, create_map_action_row, user_team_author, create_sidepick_action_row};
 
 
 pub(crate) async fn handle_help(context: &Context, msg: &ApplicationCommandInteraction) -> String {
@@ -80,9 +83,9 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
     setup.current_phase = MapVeto;
     let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
     let mut result = match current_match.series_type {
-        SeriesType::Bo1 => { handle_bo1_setup(msg, setup.clone()).await }
-        SeriesType::Bo3 => { handle_bo3_setup(msg, setup.clone()).await }
-        SeriesType::Bo5 => { handle_bo5_setup(msg, setup.clone()).await }
+        SeriesType::Bo1 => { handle_bo1_setup(setup.clone()).await }
+        SeriesType::Bo3 => { handle_bo3_setup(setup.clone()).await }
+        SeriesType::Bo5 => { handle_bo5_setup(setup.clone()).await }
     };
     setup.veto_pick_order = result.0;
     result.1.push_str("Remaining maps:\n");
@@ -127,6 +130,185 @@ pub(crate) async fn handle_defense_option(context: &Context, msg: &ApplicationCo
         return String::from("There was an issue processing this option");
     }
     resp
+}
+
+pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
+    let mut next_match = None;
+    if let Ok(roles) = context.http.get_guild_roles(*msg.guild_id.unwrap().as_u64()).await {
+        if let Ok(team_role) = find_user_team_role(roles, &msg.author, &context).await {
+            let conn = get_pg_conn(&context).await;
+            next_match = get_next_team_match(&conn, team_role.id.0 as i64);
+        }
+    } else {
+        msg.channel_id.send_message(&context, |m| m.content("You are not part of any team. Verify you have a role starting with `Team`")).await.unwrap();
+        return;
+    }
+    if next_match.is_none() {
+        msg.channel_id.send_message(&context, |m| m.content("Your team does not have any scheduled matches")).await.unwrap();
+        return;
+    }
+    let current_match = next_match.unwrap();
+    let maps: Vec<String> = get_maps(&context).await;
+    let mut setup: Setup = Setup {
+        maps_remaining: maps,
+        maps: vec![],
+        vetoes: vec![],
+        series_type: current_match.series_type,
+        team_one: Some(current_match.team_one_role_id.clone()),
+        team_two: Some(current_match.team_two_role_id.clone()),
+        match_id: Some(current_match.id),
+        veto_pick_order: vec![],
+        current_step: 0,
+        current_phase: MapVeto,
+    };
+    let result = match current_match.series_type {
+        SeriesType::Bo1 => { handle_bo1_setup(setup.clone()).await }
+        SeriesType::Bo3 => { handle_bo3_setup(setup.clone()).await }
+        SeriesType::Bo5 => { handle_bo5_setup(setup.clone()).await }
+    };
+    setup.veto_pick_order = result.0;
+    let init_msg = result.1;
+    let m = msg
+        .channel_id
+        .send_message(&context, |m| {
+            m.content(init_msg).components(|c|
+                c.add_action_row(create_map_action_row(setup.maps_remaining.clone())))
+        })
+        .await
+        .unwrap();
+
+    // Wait for the user to make a selection
+    let mut cib = m.await_component_interactions(&context).build();
+
+    while let Some(mci) = cib.next().await {
+        match setup.current_phase {
+            MapVeto => {
+                let map_selected = mci.data.values.get(0).unwrap();
+                let step_type = match setup.veto_pick_order[setup.current_step].step_type {
+                    Veto => { String::from("banned") }
+                    Pick => { String::from("picked") }
+                };
+                if let Ok(role_id) = user_team_author(&context, &setup, &mci).await {
+                    if setup.veto_pick_order.get(setup.current_step).unwrap().team_role_id != role_id as i64 {
+                        mci.create_interaction_response(&context, |r| {
+                            r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+                                |d| {
+                                    d.ephemeral(true).content("It is not your team's turn to pick or ban")
+                                },
+                            )
+                        }).await.unwrap();
+                        continue;
+                    }
+
+                    if setup.veto_pick_order[setup.current_step].step_type == Pick {
+                        setup.maps.push(SetupMap {
+                            map: map_selected.clone(),
+                            picked_by: setup.veto_pick_order.get(setup.current_step).unwrap().team_role_id,
+                            match_id: 0,
+                            start_attack_team_role_id: None,
+                            start_defense_team_role_id: None,
+                        })
+                    }
+                    setup.veto_pick_order[setup.current_step].map = Some(String::from(map_selected));
+
+                    if setup.veto_pick_order.len() == setup.current_step + 1 {
+                        let first_map = setup.maps.get(0).unwrap();
+                        mci.create_interaction_response(&context, |r| {
+                            r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
+                                |d| {
+                                    d.content(format!("Map veto completed.\nIt is <@&{}> turn to pick starting side for `{}`", first_map.picked_by, first_map.map))
+                                        .components(|c| c.add_action_row(create_sidepick_action_row()))
+                                },
+                            )
+                        }).await.unwrap();
+                        setup.current_step = 0;
+                        setup.current_phase = SidePick;
+                        continue;
+                    }
+
+                    let next_step_type = match setup.veto_pick_order[setup.current_step + 1].step_type {
+                        Veto => { String::from("ban") }
+                        Pick => { String::from("pick") }
+                    };
+                    let next_role_id = setup.veto_pick_order.get(setup.current_step + 1).unwrap().team_role_id;
+                    let map_index = setup.maps_remaining.iter().position(|m| m == map_selected).unwrap();
+                    setup.maps_remaining.remove(map_index);
+                    mci.create_interaction_response(&context, |r| {
+                        r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
+                            |d| {
+                                d.content(format!("<@&{}> {} `{}`\nIt is <@&{}> turn to {}", role_id, step_type, map_selected, next_role_id, next_step_type))
+                                    .components(|c| c.add_action_row(create_map_action_row(setup.maps_remaining.clone())))
+                            },
+                        )
+                    }).await.unwrap();
+                    setup.current_step = setup.current_step + 1;
+
+                } else {
+                    mci.create_interaction_response(&context, |r| {
+                        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+                            |d| {
+                                d.ephemeral(true).content("You are not part of either team currently setting up a match")
+                            },
+                        )
+                    }).await.unwrap();
+                }
+            }
+            SidePick => {
+                let option_selected = mci.data.values.get(0).unwrap();
+                if let Ok(role_id) = user_team_author(&context, &setup, &mci).await {
+                    let other_role_id = if setup.team_one.unwrap() == role_id as i64 {setup.team_two.unwrap()} else {setup.team_one.unwrap()};
+                    if other_role_id == role_id as i64 {
+                        mci.create_interaction_response(&context, |r| {
+                            r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+                                |d| {
+                                    d.ephemeral(true).content("It is not your team's turn to pick sides")
+                                },
+                            )
+                        }).await.unwrap();
+                        continue;
+                    }
+                    if setup.maps.len() > setup.current_step + 1 {
+                        let current_map = &setup.maps.get(setup.current_step).unwrap().map;
+                        let next_map = &setup.maps.get(setup.current_step + 1).unwrap().map;
+                        mci.create_interaction_response(&context, |r| {
+                            r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
+                                |d| {
+                                    d.content(format!("<@&{}> picked to start {} on `{}`\nIt is <@&{}> turn to pick starting side on {}", role_id, option_selected.to_uppercase(), current_map, other_role_id, next_map))
+                                        .components(|c| c.add_action_row(create_sidepick_action_row()))
+                                },
+                            )
+                        }).await.unwrap();
+                    }
+                    if option_selected == &String::from("CT") {
+                        setup.maps[setup.current_step].start_defense_team_role_id = Some(other_role_id);
+                        setup.maps[setup.current_step].start_attack_team_role_id = Some(role_id as i64);
+                    } else {
+                        setup.maps[setup.current_step].start_attack_team_role_id = Some(other_role_id);
+                        setup.maps[setup.current_step].start_defense_team_role_id = Some(role_id as i64);
+                    }
+                    setup.current_step = setup.current_step + 1;
+                    if setup.maps.len() == setup.current_step {
+                        msg.channel_id.send_message(&context, |m| m.content("Match setup completed, starting server...")).await.unwrap();
+                        m.delete(&context).await.expect("Expected message to delete");
+                        handle_server_start(&context, msg, &setup);
+                    }
+                } else {
+                    mci.create_interaction_response(&context, |r| {
+                        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+                            |d| {
+                                d.ephemeral(true).content("You are not part of either team currently setting up a match")
+                            },
+                        )
+                    }).await.unwrap();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn handle_server_start(context: &Context, msg: &Message, setup: &Setup) {
+    println!("{:#?}", setup);
 }
 
 pub(crate) async fn handle_attack_option(context: &Context, msg: &ApplicationCommandInteraction) -> String {
@@ -193,8 +375,8 @@ pub(crate) async fn handle_pick_option(context: &Context, msg: &ApplicationComma
             .resolved
             .as_ref()
             .expect("Expected object");
-        if let ApplicationCommandInteractionDataOptionValue::String(map) = option {
-            if !setup.maps_remaining.contains(map) {
+        if let CommandDataOptionValue::String(map) = option {
+            if !setup.maps_remaining.contains(&map) {
                 return String::from("Select a remaining map");
             }
             setup.veto_pick_order[setup.current_step].map = Some(String::from(map));
@@ -250,8 +432,8 @@ pub(crate) async fn handle_ban_option(context: &Context, msg: &ApplicationComman
             .resolved
             .as_ref()
             .expect("Expected object");
-        if let ApplicationCommandInteractionDataOptionValue::String(map) = option {
-            if !setup.maps_remaining.contains(map) {
+        if let CommandDataOptionValue::String(map) = option {
+            if !setup.maps_remaining.contains(&map) {
                 return String::from("Select a remaining map");
             }
             setup.veto_pick_order[setup.current_step].map = Some(String::from(map));
@@ -294,7 +476,7 @@ pub(crate) async fn handle_schedule(context: &Context, msg: &ApplicationCommandI
         .as_ref()
         .expect("Expected object");
     let mut date: Option<String> = None;
-    if let ApplicationCommandInteractionDataOptionValue::String(date_str) = option_one {
+    if let CommandDataOptionValue::String(date_str) = option_one {
         date = Some(date_str.clone());
     }
     if let Ok(roles) = context.http.get_guild_roles(*msg.guild_id.unwrap().as_u64()).await {
@@ -330,7 +512,7 @@ pub(crate) async fn handle_match(context: &Context, msg: &ApplicationCommandInte
         .as_ref()
         .expect("Expected object");
 
-    return if let ApplicationCommandInteractionDataOptionValue::String(match_id) = option_one {
+    return if let CommandDataOptionValue::String(match_id) = option_one {
         let match_id_parsed = match_id.clone().parse::<i32>().unwrap();
         let conn = get_pg_conn(context).await;
         let m: Match = get_match(&conn, match_id_parsed);
@@ -353,13 +535,13 @@ pub(crate) async fn handle_matches(context: &Context, msg: &ApplicationCommandIn
         .get(1);
     let mut show_completed = false;
     if let Some(option) = option_two {
-        if let Some(ApplicationCommandInteractionDataOptionValue::Boolean(display)) = &option.resolved {
+        if let Some(CommandDataOptionValue::Boolean(display)) = &option.resolved {
             show_completed = *display;
         }
     }
     let mut show_ids = false;
     if let Some(option) = option_one {
-        if let Some(ApplicationCommandInteractionDataOptionValue::Boolean(display)) = &option.resolved {
+        if let Some(CommandDataOptionValue::Boolean(display)) = &option.resolved {
             show_ids = *display;
         }
     }
@@ -411,22 +593,22 @@ pub(crate) async fn handle_add_match(context: &Context, msg: &ApplicationCommand
     let mut team_two_role_id = 0;
     let mut team_two_name = "";
     let mut series_type = SeriesType::Bo1;
-    if let ApplicationCommandInteractionDataOptionValue::Role(team_one_role) = option_one {
+    if let CommandDataOptionValue::Role(team_one_role) = option_one {
         team_one_role_id = team_one_role.id.0;
         team_one_name = &team_one_role.name.as_str().clone();
     }
-    if let ApplicationCommandInteractionDataOptionValue::Role(team_two_role) = option_two {
+    if let CommandDataOptionValue::Role(team_two_role) = option_two {
         team_two_role_id = team_two_role.id.0;
         team_two_name = &team_two_role.name.as_str().clone();
     }
 
-    if let ApplicationCommandInteractionDataOptionValue::String(s_type) = option_three {
+    if let CommandDataOptionValue::String(s_type) = option_three {
         series_type = SeriesType::from_str(s_type).unwrap().clone();
     }
 
     let mut note = String::new();
     if let Some(option) = option_four {
-        if let Some(ApplicationCommandInteractionDataOptionValue::String(option_value)) = &option.resolved {
+        if let Some(CommandDataOptionValue::String(option_value)) = &option.resolved {
             note = option_value.clone();
         }
     }
@@ -461,7 +643,7 @@ pub(crate) async fn handle_delete_match(context: &Context, msg: &ApplicationComm
         .as_ref()
         .expect("Expected object");
     let mut parsed_match_id: Option<i32> = None;
-    if let ApplicationCommandInteractionDataOptionValue::Integer(match_id) = option_one {
+    if let CommandDataOptionValue::Integer(match_id) = option_one {
         if let Ok(id) = i32::try_from(match_id.clone()) {
             parsed_match_id = Some(id);
         }
@@ -484,7 +666,7 @@ pub(crate) async fn handle_steam_id(context: &Context, inc_command: &Application
         .resolved
         .as_ref()
         .expect("Expected object");
-    if let ApplicationCommandInteractionDataOptionValue::String(steamid) = option {
+    if let CommandDataOptionValue::String(steamid) = option {
         let steam_id_regex = Regex::new("^STEAM_[0-5]:[01]:\\d+$").unwrap();
         if !steam_id_regex.is_match(&steamid) {
             return String::from(" invalid Steam ID input format. Please follow this example: `STEAM_0:1:12345678`");

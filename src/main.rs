@@ -7,14 +7,20 @@ use serenity::async_trait;
 use serenity::Client;
 use serenity::client::Context;
 use serenity::framework::standard::StandardFramework;
-use serenity::model::guild::Role;
-use serenity::model::prelude::{GuildId, Interaction, InteractionResponseType, Ready};
-use serenity::model::prelude::application_command::{ApplicationCommandInteraction, ApplicationCommandOptionType};
-use serenity::prelude::{EventHandler, TypeMapKey};
+
+
+use serenity::model::prelude::GuildId;
+use serenity::model::prelude::Ready;
+use serenity::prelude::{EventHandler, GatewayIntents, TypeMapKey};
 use crate::SeriesType::Bo3;
 use r2d2::{Pool};
 use r2d2_diesel::ConnectionManager;
+use serenity::model::application::command::{CommandOptionType};
+use serenity::model::application::interaction::{Interaction, InteractionResponseType};
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::channel::Message;
 use match_bot::models::{Match, SeriesType, StepType};
+use crate::commands::handle_new_setup;
 
 mod commands;
 mod utils;
@@ -37,13 +43,13 @@ struct StateContainer {
     state: State,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Veto {
     map: String,
-    vetoed_by: Role,
+    vetoed_by: u64,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupStep {
     pub match_id: i32,
     pub step_type: StepType,
@@ -51,7 +57,7 @@ pub struct SetupStep {
     pub map: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupMap {
     pub match_id: i32,
     pub map: String,
@@ -60,7 +66,7 @@ pub struct SetupMap {
     pub start_defense_team_role_id: Option<i64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Setup {
     team_one: Option<i64>,
     team_two: Option<i64>,
@@ -74,7 +80,7 @@ struct Setup {
     current_phase: State,
 }
 
-#[derive(PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 enum State {
     Idle,
     MapVeto,
@@ -159,6 +165,15 @@ impl FromStr for Command {
 
 #[async_trait]
 impl EventHandler for Handler {
+    async fn message(&self, ctx: Context, msg: Message) {
+        if msg.author.bot {
+            return;
+        }
+        if msg.content != ".newsetup" {
+            return;
+        }
+        handle_new_setup(&ctx, &msg).await;
+    }
     async fn ready(&self, context: Context, ready: Ready) {
         let config = load_config().await.unwrap();
         let guild_id = GuildId(config.discord.guild_id);
@@ -184,7 +199,7 @@ impl EventHandler for Handler {
                         option
                             .name("steamid")
                             .description("Your steamID, i.e. STEAM_0:1:12345678")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(true)
                     })
                 })
@@ -193,7 +208,7 @@ impl EventHandler for Handler {
                         option
                             .name("matchid")
                             .description("Match ID")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(true)
                     })
                 })
@@ -202,14 +217,14 @@ impl EventHandler for Handler {
                         option
                             .name("displayid")
                             .description("Display match IDs")
-                            .kind(ApplicationCommandOptionType::Boolean)
+                            .kind(CommandOptionType::Boolean)
                             .required(false)
                     })
                         .create_option(|option| {
                             option
                                 .name("showcompleted")
                                 .description("Shows only completed matches")
-                                .kind(ApplicationCommandOptionType::Boolean)
+                                .kind(CommandOptionType::Boolean)
                                 .required(false)
                         })
                 })
@@ -218,7 +233,7 @@ impl EventHandler for Handler {
                         option
                             .name("matchid")
                             .description("Match ID")
-                            .kind(ApplicationCommandOptionType::Integer)
+                            .kind(CommandOptionType::Integer)
                             .required(true)
                     })
                 })
@@ -226,11 +241,14 @@ impl EventHandler for Handler {
                     command.name("setup").description("Setup your next match")
                 })
                 .create_application_command(|command| {
+                    command.name("newsetup").description("Setup your next match")
+                })
+                .create_application_command(|command| {
                     command.name("pick").description("Pick a map during the map veto").create_option(|option| {
                         option
                             .name("map")
                             .description("Map name")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(true)
                             .add_string_choice("de_dust2", "de_dust2")
                             .add_string_choice("de_inferno", "de_inferno")
@@ -246,7 +264,7 @@ impl EventHandler for Handler {
                         option
                             .name("map")
                             .description("Map name")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(true)
                             .add_string_choice("de_dust2", "de_dust2")
                             .add_string_choice("de_inferno", "de_inferno")
@@ -262,19 +280,19 @@ impl EventHandler for Handler {
                         option
                             .name("teamone")
                             .description("Team 1 (Home)")
-                            .kind(ApplicationCommandOptionType::Role)
+                            .kind(CommandOptionType::Role)
                             .required(true)
                     }).create_option(|option| {
                         option
                             .name("teamtwo")
                             .description("Team 2 (Away)")
-                            .kind(ApplicationCommandOptionType::Role)
+                            .kind(CommandOptionType::Role)
                             .required(true)
                     }).create_option(|option| {
                         option
                             .name("type")
                             .description("Series Type")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(true)
                             .add_string_choice("Best of 1", "bo1")
                             .add_string_choice("Best of 3", "bo3")
@@ -283,7 +301,7 @@ impl EventHandler for Handler {
                         option
                             .name("note")
                             .description("Note")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(false)
                     })
                 })
@@ -292,7 +310,7 @@ impl EventHandler for Handler {
                         option
                             .name("date")
                             .description("Date (Month/Day/Year) @ Time <Timezone>")
-                            .kind(ApplicationCommandOptionType::String)
+                            .kind(CommandOptionType::String)
                             .required(true)
                     })
                 })
@@ -303,25 +321,27 @@ impl EventHandler for Handler {
     }
     async fn interaction_create(&self, context: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(inc_command) = interaction {
-            let command = Command::from_str(&inc_command.data.name.as_str().to_lowercase()).expect("Expected valid command");
-            let content: String = match command {
-                Command::SteamId => commands::handle_steam_id(&context, &inc_command).await,
-                Command::Setup => commands::handle_setup(&context, &inc_command).await,
-                Command::Addmatch => commands::handle_add_match(&context, &inc_command).await,
-                Command::Deletematch => commands::handle_delete_match(&context, &inc_command).await,
-                Command::Schedule => commands::handle_schedule(&context, &inc_command).await,
-                Command::Match => commands::handle_match(&context, &inc_command).await,
-                Command::Matches => commands::handle_matches(&context, &inc_command).await,
-                Command::Maps => commands::handle_map_list(&context).await,
-                Command::Defense => commands::handle_defense_option(&context, &inc_command).await,
-                Command::Attack => commands::handle_attack_option(&context, &inc_command).await,
-                Command::Pick => commands::handle_pick_option(&context, &inc_command).await,
-                Command::Ban => commands::handle_ban_option(&context, &inc_command).await,
-                Command::Cancel => commands::handle_cancel(&context, &inc_command).await,
-                Command::Help => commands::handle_help(&context, &inc_command).await,
-            };
-            if let Err(why) = create_int_resp(&context, &inc_command, content).await {
-                eprintln!("Cannot respond to slash command: {}", why);
+            let command = inc_command.data.name.as_str().to_lowercase();
+            if let Ok(normal_command) = Command::from_str(&command) {
+                let content: String = match normal_command {
+                    Command::SteamId => commands::handle_steam_id(&context, &inc_command).await,
+                    Command::Setup => commands::handle_setup(&context, &inc_command).await,
+                    Command::Addmatch => commands::handle_add_match(&context, &inc_command).await,
+                    Command::Deletematch => commands::handle_delete_match(&context, &inc_command).await,
+                    Command::Schedule => commands::handle_schedule(&context, &inc_command).await,
+                    Command::Match => commands::handle_match(&context, &inc_command).await,
+                    Command::Matches => commands::handle_matches(&context, &inc_command).await,
+                    Command::Maps => commands::handle_map_list(&context).await,
+                    Command::Defense => commands::handle_defense_option(&context, &inc_command).await,
+                    Command::Attack => commands::handle_attack_option(&context, &inc_command).await,
+                    Command::Pick => commands::handle_pick_option(&context, &inc_command).await,
+                    Command::Ban => commands::handle_ban_option(&context, &inc_command).await,
+                    Command::Cancel => commands::handle_cancel(&context, &inc_command).await,
+                    Command::Help => commands::handle_help(&context, &inc_command).await,
+                };
+                if let Err(why) = create_int_resp(&context, &inc_command, content).await {
+                    eprintln!("Cannot respond to slash command: {}", why);
+                }
             }
         }
     }
@@ -341,7 +361,8 @@ async fn main() {
     let config = load_config().await.unwrap();
     let token = &config.discord.token;
     let framework = StandardFramework::new();
-    let mut client = Client::builder(&token)
+    let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
+    let mut client = Client::builder(&token, intents)
         .event_handler(Handler {})
         .framework(framework)
         .application_id(config.discord.application_id)

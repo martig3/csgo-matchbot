@@ -1,15 +1,17 @@
+use std::sync::Arc;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
+use serenity::builder::{CreateActionRow, CreateSelectMenu, CreateSelectMenuOption};
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
-use serenity::model::prelude::application_command::{ApplicationCommandInteraction};
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::application::interaction::message_component::MessageComponentInteraction;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, update_match_state};
 use match_bot::models::MatchState::Completed;
 use match_bot::models::{MatchSetupStep, NewMatchSetupStep, NewSeriesMap};
-use match_bot::schema::series_map::map;
-use crate::{Bo3, Config, DBConnectionPool, Maps, Match, Setup, SetupStep, State};
+use crate::{Bo3, Config, DBConnectionPool, Match, Setup, SetupStep, State};
 use crate::StepType::{Pick, Veto};
 
 pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
@@ -64,10 +66,22 @@ pub(crate) async fn user_team(context: &Context, msg: &ApplicationCommandInterac
     Err(String::from("You are not part of either team currently running `/setup`"))
 }
 
+pub(crate) async fn user_team_author(context: &Context, setup: &Setup, msg: &Arc<MessageComponentInteraction>) -> Result<u64, String> {
+    let role_one = RoleId::from(setup.clone().team_one.unwrap() as u64).0;
+    let role_two = RoleId::from(setup.clone().team_two.unwrap() as u64).0;
+    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_one).await {
+        if has_role_one { return Ok(role_one); }
+        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_two).await {
+            if has_role_two { return Ok(role_two); }
+        }
+    }
+    Err(String::from("You are not part of either team currently running `/setup`"))
+}
+
 pub(crate) async fn admin_check(context: &Context, inc_command: &ApplicationCommandInteraction) -> Result<String, String> {
     let data = context.data.write().await;
     let config: &Config = data.get::<Config>().unwrap();
-    let role_name = context.cache.role(inc_command.guild_id.unwrap(), RoleId::from(config.discord.admin_role_id)).await.unwrap().name;
+    let role_name = context.cache.role(inc_command.guild_id.unwrap(), RoleId::from(config.discord.admin_role_id)).unwrap().name;
     return if inc_command.user.has_role(&context.http, GuildContainer::from(inc_command.guild_id.unwrap()), RoleId::from(config.discord.admin_role_id)).await.unwrap_or(false) {
         Ok(String::from("User has admin role"))
     } else {
@@ -177,7 +191,7 @@ pub(crate) fn eos_printout(setup: Setup) -> String {
 }
 
 
-pub(crate) async fn handle_bo1_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+pub(crate) async fn handle_bo1_setup(setup: Setup) -> (Vec<SetupStep>, String) {
     let match_id = setup.match_id.unwrap();
     return (vec![
         SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_two.unwrap() as i64, map: None },
@@ -189,7 +203,7 @@ pub(crate) async fn handle_bo1_setup(_msg: &ApplicationCommandInteraction, setup
     ], format!("Best of 1 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_two.unwrap()));
 }
 
-pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+pub(crate) async fn handle_bo3_setup(setup: Setup) -> (Vec<SetupStep>, String) {
     let match_id = setup.match_id.unwrap();
     return (vec![
         SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
@@ -201,7 +215,7 @@ pub(crate) async fn handle_bo3_setup(_msg: &ApplicationCommandInteraction, setup
     ], format!("Best of 3 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap()));
 }
 
-pub(crate) async fn handle_bo5_setup(_msg: &ApplicationCommandInteraction, setup: Setup) -> (Vec<SetupStep>, String) {
+pub(crate) async fn handle_bo5_setup(setup: Setup) -> (Vec<SetupStep>, String) {
     let match_id = setup.match_id.unwrap();
     return (vec![
         SetupStep { match_id, step_type: Veto, team_role_id: setup.clone().team_one.unwrap() as i64, map: None },
@@ -232,3 +246,39 @@ pub(crate) async fn get_pg_conn(context: &Context) -> PooledConnection<Connectio
     let pool = data.get::<DBConnectionPool>().unwrap();
     pool.get().unwrap()
 }
+
+pub fn create_sidepick_action_row() -> CreateActionRow {
+    let mut ar = CreateActionRow::default();
+    let mut menu = CreateSelectMenu::default();
+    menu.custom_id("side_pick");
+    menu.placeholder("Select starting side");
+    menu.options(|f|
+        f.add_option(create_menu_option(String::from("CT")))
+            .add_option(create_menu_option(String::from("T"))));
+    ar.add_select_menu(menu);
+    ar
+}
+
+pub fn create_map_action_row(map_list: Vec<String>) -> CreateActionRow {
+    let mut ar = CreateActionRow::default();
+    let mut menu = CreateSelectMenu::default();
+    menu.custom_id("map_select");
+    menu.placeholder("Select map");
+    let mut options = Vec::new();
+    for map_name in map_list {
+        options.push(create_menu_option(map_name))
+    }
+    menu.options(|f| f.set_options(options));
+    ar.add_select_menu(menu);
+    ar
+}
+
+pub fn create_menu_option(label: String) -> CreateSelectMenuOption {
+    let mut opt = CreateSelectMenuOption::default();
+    // This is what will be shown to the user
+    opt.label(&label);
+    // This is used to identify the selected value
+    opt.value(&label.to_ascii_lowercase());
+    opt
+}
+
