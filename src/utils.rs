@@ -2,10 +2,12 @@ use std::sync::Arc;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
-use serenity::builder::{CreateActionRow, CreateSelectMenu, CreateSelectMenuOption};
+use serenity::builder::{CreateActionRow, CreateButton, CreateSelectMenu, CreateSelectMenuOption};
+use serenity::model::application::component::ButtonStyle;
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::message_component::MessageComponentInteraction;
+use serenity::model::channel::ReactionType;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, update_match_state};
@@ -256,6 +258,29 @@ pub fn create_sidepick_action_row() -> CreateActionRow {
         f.add_option(create_menu_option(String::from("CT")))
             .add_option(create_menu_option(String::from("T"))));
     ar.add_select_menu(menu);
+    ar
+}
+
+pub fn create_server_conn_button_row(url: &String, gotv_url: &String) -> CreateActionRow {
+    let mut ar = CreateActionRow::default();
+    let mut conn_button = CreateButton::default();
+    conn_button.label("Connect");
+    conn_button.style(ButtonStyle::Link);
+    conn_button.emoji(ReactionType::Unicode("🛰".parse().unwrap()));
+    conn_button.url(&url);
+    ar.add_button(conn_button);
+    let mut console_button = CreateButton::default();
+    console_button.custom_id("console");
+    console_button.label("Console Cmds");
+    console_button.style(ButtonStyle::Secondary);
+    console_button.emoji(ReactionType::Unicode("🧾".parse().unwrap()));
+    ar.add_button(console_button);
+    let mut gotv_button = CreateButton::default();
+    gotv_button.label("GOTV");
+    gotv_button.style(ButtonStyle::Link);
+    gotv_button.emoji(ReactionType::Unicode("📺".parse().unwrap()));
+    gotv_button.url(gotv_url);
+    ar.add_button(gotv_button);
     ar
 }
 

@@ -20,7 +20,7 @@ use serenity::model::application::interaction::{Interaction, InteractionResponse
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use match_bot::models::{Match, SeriesType, StepType};
-use crate::commands::handle_new_setup;
+use crate::commands::{handle_buttons_test, handle_new_setup};
 
 mod commands;
 mod utils;
@@ -169,10 +169,13 @@ impl EventHandler for Handler {
         if msg.author.bot {
             return;
         }
-        if msg.content != ".newsetup" {
+        if msg.content == ".newsetup" {
+            handle_new_setup(&ctx, &msg).await;
             return;
         }
-        handle_new_setup(&ctx, &msg).await;
+        if msg.content == ".buttons" {
+            handle_buttons_test(&ctx, &msg).await;
+        }
     }
     async fn ready(&self, context: Context, ready: Ready) {
         let config = load_config().await.unwrap();

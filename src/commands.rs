@@ -1,9 +1,11 @@
 use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::str::FromStr;
+use std::time::Duration;
 use async_std::prelude::StreamExt;
 use chrono::{Local};
 use regex::Regex;
+use urlencoding::encode;
 
 use serenity::client::Context;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
@@ -19,7 +21,7 @@ use crate::Setup;
 use crate::SetupMap;
 use crate::State::{Idle, MapVeto, SidePick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info, create_map_action_row, user_team_author, create_sidepick_action_row};
+use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info, create_map_action_row, user_team_author, create_sidepick_action_row, create_server_conn_button_row};
 
 
 pub(crate) async fn handle_help(context: &Context, msg: &ApplicationCommandInteraction) -> String {
@@ -132,6 +134,50 @@ pub(crate) async fn handle_defense_option(context: &Context, msg: &ApplicationCo
     resp
 }
 
+pub async fn handle_buttons_test(context: &Context, msg: &Message) {
+    let client = reqwest::Client::new();
+    let url = "104.128.60.20:27015";
+    let port_start = &url.find(':').unwrap_or(0_usize) + 1;
+    let gotv_port = String::from(&url[port_start..url.len()]).parse::<i64>().unwrap_or(0) + 1;
+    let gotv_url = format!("{}{}", &url[0..port_start], gotv_port);
+    let url_link = format!("steam://connect/{}", &url);
+    let gotv_link = format!("steam://connect/{}", &gotv_url);
+    let resp = client
+        .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&url_link)))
+        .send()
+        .await
+        .unwrap();
+    let t_url = resp.text_with_charset("utf-8").await.unwrap();
+    let resp = client
+        .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&gotv_link)))
+        .send()
+        .await
+        .unwrap();
+    let t_gotv_url = resp.text_with_charset("utf-8").await.unwrap();
+
+    let m = msg.channel_id.send_message(&context, |m| m.content("Server started!")
+        .components(|c|
+            c.add_action_row(
+                create_server_conn_button_row(&t_url, &t_gotv_url)
+            ))
+    ).await.unwrap();
+    let mci =
+        match m.await_component_interaction(&context).timeout(Duration::from_secs(3_600)).await {
+            Some(ci) => ci,
+            None => {
+                m.reply(&context, "Timed out").await.unwrap();
+                return;
+            },
+        };
+    mci.create_interaction_response(&context, |r| {
+        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
+                d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &url, &gotv_url))
+        })
+    })
+        .await
+        .unwrap();
+}
+
 pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
     let mut next_match = None;
     if let Ok(roles) = context.http.get_guild_roles(*msg.guild_id.unwrap().as_u64()).await {
@@ -242,7 +288,6 @@ pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
                         )
                     }).await.unwrap();
                     setup.current_step = setup.current_step + 1;
-
                 } else {
                     mci.create_interaction_response(&context, |r| {
                         r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
@@ -256,7 +301,7 @@ pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
             SidePick => {
                 let option_selected = mci.data.values.get(0).unwrap();
                 if let Ok(role_id) = user_team_author(&context, &setup, &mci).await {
-                    let other_role_id = if setup.team_one.unwrap() == role_id as i64 {setup.team_two.unwrap()} else {setup.team_one.unwrap()};
+                    let other_role_id = if setup.team_one.unwrap() == role_id as i64 { setup.team_two.unwrap() } else { setup.team_one.unwrap() };
                     if other_role_id == role_id as i64 {
                         mci.create_interaction_response(&context, |r| {
                             r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
