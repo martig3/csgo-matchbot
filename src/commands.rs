@@ -206,6 +206,7 @@ pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
         veto_pick_order: vec![],
         current_step: 0,
         current_phase: MapVeto,
+        server_id: None,
     };
     let result = match current_match.series_type {
         SeriesType::Bo1 => { handle_bo1_setup(setup.clone()).await }

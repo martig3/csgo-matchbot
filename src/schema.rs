@@ -5,6 +5,13 @@ table! {
 }
 
 table! {
+    match_servers (region_label) {
+        region_label -> Varchar,
+        server_id -> Varchar,
+    }
+}
+
+table! {
     match_setup_step (id) {
         id -> Int4,
         match_id -> Int4,
@@ -53,6 +60,7 @@ joinable!(series_map -> matches (match_id));
 
 allow_tables_to_appear_in_same_query!(
     maps,
+    match_servers,
     match_setup_step,
     matches,
     series_map,

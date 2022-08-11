@@ -90,6 +90,12 @@ pub struct NewSeriesMap<'a> {
 }
 
 #[derive(Queryable, Clone, Serialize, Deserialize)]
+pub struct MatchServer {
+    pub region_label: String,
+    pub server_id: String,
+}
+
+#[derive(Queryable, Clone, Serialize, Deserialize)]
 pub struct Map {
     pub name: String,
 }

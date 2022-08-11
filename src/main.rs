@@ -78,6 +78,7 @@ struct Setup {
     veto_pick_order: Vec<SetupStep>,
     current_step: usize,
     current_phase: State,
+    server_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
