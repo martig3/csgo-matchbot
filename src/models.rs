@@ -60,7 +60,7 @@ pub struct MatchSetupStep {
 }
 
 
-#[derive(Insertable)]
+#[derive(Insertable, Clone)]
 #[table_name = "match_setup_step"]
 pub struct NewMatchSetupStep<'a> {
     pub match_id: &'a i32,
@@ -79,7 +79,7 @@ pub struct SeriesMap {
     pub start_defense_team_role_id: Option<i64>,
 }
 
-#[derive(Insertable)]
+#[derive(Insertable, Clone)]
 #[table_name = "series_map"]
 pub struct NewSeriesMap<'a> {
     pub match_id: &'a i32,

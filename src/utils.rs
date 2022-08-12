@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::sync::Arc;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
@@ -10,10 +11,9 @@ use serenity::model::application::interaction::message_component::MessageCompone
 use serenity::model::channel::ReactionType;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
-use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, update_match_state};
-use match_bot::models::MatchState::Completed;
-use match_bot::models::{MatchSetupStep, NewMatchSetupStep, NewSeriesMap};
-use crate::{Bo3, Config, DBConnectionPool, Match, Setup, SetupStep, State};
+use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, get_match_servers};
+use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap};
+use crate::{Config, DBConnectionPool, Match, Setup, SetupStep, State};
 use crate::StepType::{Pick, Veto};
 
 pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
@@ -33,39 +33,6 @@ pub(crate) async fn find_user_team_role(all_guild_roles: Vec<Role>, user: &User,
         }
     }
     Err(String::from("User does not have a team role"))
-}
-
-pub(crate) async fn is_phase_allowed(context: &Context, msg: &ApplicationCommandInteraction, state: State) -> Result<(), String> {
-    let mut data = context.data.write().await;
-    let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-    if setup.current_phase != state {
-        return Err(String::from("It is not the correct phase"));
-    }
-    let role_one = RoleId::from(setup.clone().team_one.unwrap() as u64).0;
-    let role_two = RoleId::from(setup.clone().team_two.unwrap() as u64).0;
-    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_one).await {
-        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_two).await {
-            if !has_role_one && !has_role_two {
-                return Err(String::from("You are not part of either team currently running `/setup`"));
-            }
-        }
-    }
-    Ok(())
-}
-
-
-pub(crate) async fn user_team(context: &Context, msg: &ApplicationCommandInteraction) -> Result<u64, String> {
-    let mut data = context.data.write().await;
-    let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-    let role_one = RoleId::from(setup.clone().team_one.unwrap() as u64).0;
-    let role_two = RoleId::from(setup.clone().team_two.unwrap() as u64).0;
-    if let Ok(has_role_one) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_one).await {
-        if has_role_one { return Ok(role_one); }
-        if let Ok(has_role_two) = msg.user.has_role(&context.http, msg.guild_id.unwrap(), role_two).await {
-            if has_role_two { return Ok(role_two); }
-        }
-    }
-    Err(String::from("You are not part of either team currently running `/setup`"))
 }
 
 pub(crate) async fn user_team_author(context: &Context, setup: &Setup, msg: &Arc<MessageComponentInteraction>) -> Result<u64, String> {
@@ -102,48 +69,44 @@ pub(crate) async fn get_maps(context: &Context) -> Vec<String> {
     map_pool.into_iter().map(|m| m.name).collect()
 }
 
+pub(crate) async fn get_servers(context: &Context) -> Vec<MatchServer> {
+    let conn = get_pg_conn(&context).await;
+    let servers = get_match_servers(&conn);
+    servers
+}
+
 pub(crate) async fn get_setup(context: &Context) -> Setup {
     let data = context.data.write().await;
     let setup_final: Setup = data.get::<Setup>().unwrap().clone();
     setup_final
 }
 
-pub(crate) async fn finish_setup(context: &Context) {
-    let maps = get_maps(context).await;
-    {
-        let setup_final = get_setup(context).await;
-        let mut match_setup_steps: Vec<NewMatchSetupStep> = Vec::new();
-        let match_id = setup_final.match_id.unwrap();
-        for v in setup_final.veto_pick_order {
-            let step = NewMatchSetupStep {
-                match_id: &match_id,
-                step_type: v.step_type.clone(),
-                team_role_id: v.team_role_id,
-                map: Option::from(v.map.unwrap()),
-            };
-            match_setup_steps.push(step);
-        }
-        let mut series_maps: Vec<NewSeriesMap> = Vec::new();
-        let match_id = setup_final.match_id.unwrap();
-        for m in setup_final.maps {
-            let step = NewSeriesMap {
-                match_id: &match_id,
-                map: m.map,
-                picked_by_role_id: m.picked_by,
-                start_attack_team_role_id: m.start_attack_team_role_id,
-                start_defense_team_role_id: m.start_defense_team_role_id,
-            };
-            series_maps.push(step);
-        }
-        let conn = get_pg_conn(&context).await;
-        create_match_setup_steps(&conn, match_setup_steps);
-        create_series_maps(&conn, series_maps);
-        update_match_state(&conn, match_id, Completed);
+pub(crate) async fn finish_setup(context: &Context, setup_final: &Setup) {
+    let mut match_setup_steps: Vec<NewMatchSetupStep> = Vec::new();
+    let match_id = setup_final.match_id.unwrap();
+    for v in &setup_final.veto_pick_order {
+        let step = NewMatchSetupStep {
+            match_id: &match_id,
+            step_type: v.step_type.clone(),
+            team_role_id: v.team_role_id,
+            map: Option::from(v.map.clone().unwrap()),
+        };
+        match_setup_steps.push(step);
     }
-    {
-        let mut data = context.data.write().await;
-        let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-        reset_setup(setup, maps);
+    let mut series_maps: Vec<NewSeriesMap> = Vec::new();
+    let match_id = setup_final.match_id.unwrap();
+    for m in &setup_final.maps {
+        let step = NewSeriesMap {
+            match_id: &match_id,
+            map: m.clone().map,
+            picked_by_role_id: m.picked_by,
+            start_attack_team_role_id: m.start_attack_team_role_id,
+            start_defense_team_role_id: m.start_defense_team_role_id,
+        };
+        series_maps.push(step);
+        let conn = get_pg_conn(&context).await;
+        create_match_setup_steps(&conn, match_setup_steps.clone());
+        create_series_maps(&conn, series_maps.clone());
     }
 }
 
@@ -230,19 +193,6 @@ pub(crate) async fn handle_bo5_setup(setup: Setup) -> (Vec<SetupStep>, String) {
     ], format!("Best of 5 option selected. Starting map veto. <@&{}> bans first.\n", &setup.team_one.unwrap()));
 }
 
-pub(crate) fn reset_setup(setup: &mut Setup, maps: Vec<String>) {
-    setup.team_one = None;
-    setup.team_two = None;
-    setup.maps = Vec::new();
-    setup.vetoes = Vec::new();
-    setup.maps_remaining = maps;
-    setup.series_type = Bo3;
-    setup.match_id = None;
-    setup.veto_pick_order = Vec::new();
-    setup.current_step = 0;
-    setup.current_phase = State::Idle;
-}
-
 pub(crate) async fn get_pg_conn(context: &Context) -> PooledConnection<ConnectionManager<PgConnection>> {
     let data = context.data.write().await;
     let pool = data.get::<DBConnectionPool>().unwrap();
@@ -255,8 +205,8 @@ pub fn create_sidepick_action_row() -> CreateActionRow {
     menu.custom_id("side_pick");
     menu.placeholder("Select starting side");
     menu.options(|f|
-        f.add_option(create_menu_option(String::from("CT")))
-            .add_option(create_menu_option(String::from("T"))));
+        f.add_option(create_menu_option(&String::from("CT"), &String::from("ct")))
+            .add_option(create_menu_option(&String::from("T"), &String::from("t"))));
     ar.add_select_menu(menu);
     ar
 }
@@ -291,19 +241,36 @@ pub fn create_map_action_row(map_list: Vec<String>) -> CreateActionRow {
     menu.placeholder("Select map");
     let mut options = Vec::new();
     for map_name in map_list {
-        options.push(create_menu_option(map_name))
+        options.push(create_menu_option(&map_name, &map_name.to_ascii_lowercase()))
     }
     menu.options(|f| f.set_options(options));
     ar.add_select_menu(menu);
     ar
 }
 
-pub fn create_menu_option(label: String) -> CreateSelectMenuOption {
+pub fn create_server_action_row(server_list: &Vec<MatchServer>) -> CreateActionRow {
+    let mut ar = CreateActionRow::default();
+    let mut menu = CreateSelectMenu::default();
+    menu.custom_id("server_select");
+    menu.placeholder("Select server");
+    let mut options = Vec::new();
+    for server in server_list {
+        options.push(create_menu_option(&server.region_label, &server.server_id))
+    }
+    menu.options(|f| f.set_options(options));
+    ar.add_select_menu(menu);
+    ar
+}
+
+pub fn create_menu_option(label: &String, value: &String) -> CreateSelectMenuOption {
     let mut opt = CreateSelectMenuOption::default();
     // This is what will be shown to the user
     opt.label(&label);
     // This is used to identify the selected value
-    opt.value(&label.to_ascii_lowercase());
+    opt.value(&value.to_ascii_lowercase());
     opt
 }
 
+pub fn start_server(context: &Context, msg: &ApplicationCommandInteraction, setup: &Setup) {
+    println!("{:#?}", setup);
+}

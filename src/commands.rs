@@ -19,9 +19,25 @@ use match_bot::models::{Match, MatchState, NewMatch, SeriesType};
 
 use crate::Setup;
 use crate::SetupMap;
-use crate::State::{Idle, MapVeto, SidePick};
+use crate::State::{MapVeto, SidePick, ServerPick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{admin_check, find_user_team_role, is_phase_allowed, user_team, eos_printout, get_maps, reset_setup, finish_setup, print_match_info, handle_bo3_setup, handle_bo5_setup, convert_steamid_to_64, get_pg_conn, handle_bo1_setup, print_veto_info, create_map_action_row, user_team_author, create_sidepick_action_row, create_server_conn_button_row};
+use crate::utils::{find_user_team_role, start_server};
+use crate::utils::admin_check;
+use crate::utils::get_maps;
+use crate::utils::finish_setup;
+use crate::utils::print_match_info;
+use crate::utils::handle_bo3_setup;
+use crate::utils::handle_bo5_setup;
+use crate::utils::convert_steamid_to_64;
+use crate::utils::get_pg_conn;
+use crate::utils::handle_bo1_setup;
+use crate::utils::print_veto_info;
+use crate::utils::create_map_action_row;
+use crate::utils::user_team_author;
+use crate::utils::create_sidepick_action_row;
+use crate::utils::create_server_conn_button_row;
+use crate::utils::get_servers;
+use crate::utils::create_server_action_row;
 
 
 pub(crate) async fn handle_help(context: &Context, msg: &ApplicationCommandInteraction) -> String {
@@ -59,81 +75,6 @@ _These are privileged admin commands:_
     String::from("Help info sent via DM")
 }
 
-pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    let mut next_match = None;
-    if let Ok(roles) = context.http.get_guild_roles(*msg.guild_id.unwrap().as_u64()).await {
-        if let Ok(team_role) = find_user_team_role(roles, &msg.user, &context).await {
-            let conn = get_pg_conn(&context).await;
-            next_match = get_next_team_match(&conn, team_role.id.0 as i64);
-        }
-    } else {
-        return String::from("You are not part of any team. Verify you have a role starting with `Team`");
-    }
-    if next_match.is_none() {
-        return String::from("Your team does not have any scheduled matches");
-    }
-    let current_match = next_match.unwrap();
-    let maps: Vec<String> = get_maps(&context).await;
-    let mut data = context.data.write().await;
-    let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-    setup.maps_remaining = maps;
-    setup.series_type = current_match.series_type;
-    setup.team_one = Some(current_match.team_one_role_id.clone());
-    setup.team_two = Some(current_match.team_two_role_id.clone());
-    setup.match_id = Some(current_match.id);
-    setup.current_step = 0;
-    setup.current_phase = MapVeto;
-    let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
-    let mut result = match current_match.series_type {
-        SeriesType::Bo1 => { handle_bo1_setup(setup.clone()).await }
-        SeriesType::Bo3 => { handle_bo3_setup(setup.clone()).await }
-        SeriesType::Bo5 => { handle_bo5_setup(setup.clone()).await }
-    };
-    setup.veto_pick_order = result.0;
-    result.1.push_str("Remaining maps:\n");
-    result.1.push_str(map_str.as_str());
-    return result.1;
-}
-
-pub(crate) async fn handle_defense_option(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    if let Err(_err) = is_phase_allowed(context, msg, SidePick).await {
-        return String::from("It is not the side pick phase");
-    }
-    let mut resp = String::new();
-    if let Ok(user_role_id) = user_team(context, msg).await {
-        let mut data = context.data.write().await;
-        let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-        if setup.maps[setup.current_step].picked_by == user_role_id as i64 {
-            return String::from("It is not your turn to pick sides");
-        }
-        let picked_role_id = user_role_id;
-        setup.maps[setup.current_step].start_defense_team_role_id = Some(user_role_id as i64);
-        setup.maps[setup.current_step].start_attack_team_role_id = Option::from(if setup.clone().team_two.unwrap() == setup.maps[setup.current_step].start_defense_team_role_id.clone().unwrap() {
-            setup.clone().team_one.unwrap() as i64
-        } else {
-            setup.clone().team_two.unwrap() as i64
-        });
-        if setup.maps.len() - 1 > setup.current_step {
-            let next_pick = if setup.clone().team_two.unwrap() == setup.maps[setup.current_step + 1].picked_by {
-                setup.clone().team_one.unwrap() as i64
-            } else {
-                setup.clone().team_two.unwrap() as i64
-            };
-            resp = format!("<@&{}> picked to start `defense` on `{}`. It is now <@&{}>'s turn to pick starting side on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase(), next_pick, setup.maps[setup.current_step + 1].map.to_lowercase());
-            setup.current_step += 1;
-            return resp;
-        } else {
-            resp = format!("<@&{}> picked to start `attack` on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase());
-            resp.push_str(eos_printout(setup.clone()).as_str());
-        };
-    }
-    finish_setup(context).await;
-    if resp == String::new() {
-        return String::from("There was an issue processing this option");
-    }
-    resp
-}
-
 pub async fn handle_buttons_test(context: &Context, msg: &Message) {
     let client = reqwest::Client::new();
     let url = "104.128.60.20:27015";
@@ -159,7 +100,7 @@ pub async fn handle_buttons_test(context: &Context, msg: &Message) {
         .components(|c|
             c.add_action_row(
                 create_server_conn_button_row(&t_url, &t_gotv_url)
-            ))
+            )),
     ).await.unwrap();
     let mci =
         match m.await_component_interaction(&context).timeout(Duration::from_secs(3_600)).await {
@@ -167,32 +108,45 @@ pub async fn handle_buttons_test(context: &Context, msg: &Message) {
             None => {
                 m.reply(&context, "Timed out").await.unwrap();
                 return;
-            },
+            }
         };
     mci.create_interaction_response(&context, |r| {
         r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
-                d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &url, &gotv_url))
+            d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &url, &gotv_url))
         })
     })
         .await
         .unwrap();
 }
 
-pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
+pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInteraction) {
     let mut next_match = None;
     if let Ok(roles) = context.http.get_guild_roles(*msg.guild_id.unwrap().as_u64()).await {
-        if let Ok(team_role) = find_user_team_role(roles, &msg.author, &context).await {
+        if let Ok(team_role) = find_user_team_role(roles, &msg.user, &context).await {
             let conn = get_pg_conn(&context).await;
             next_match = get_next_team_match(&conn, team_role.id.0 as i64);
         }
     } else {
-        msg.channel_id.send_message(&context, |m| m.content("You are not part of any team. Verify you have a role starting with `Team`")).await.unwrap();
+        msg.create_interaction_response(&context.http, |response| {
+            response
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|message| message.content("You are not part of any team. Verify you have a role starting with `Team`"))
+        }).await.expect("Expected resp");
         return;
     }
     if next_match.is_none() {
-        msg.channel_id.send_message(&context, |m| m.content("Your team does not have any scheduled matches")).await.unwrap();
+        msg.create_interaction_response(&context.http, |response| {
+            response
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|message| message.content("Your team does not have any scheduled matches"))
+        }).await.expect("Expected resp");
         return;
     }
+    msg.create_interaction_response(&context.http, |response| {
+        response
+            .kind(InteractionResponseType::ChannelMessageWithSource)
+            .interaction_response_data(|message| message.content("Starting setup..."))
+    }).await.expect("Expected resp");
     let current_match = next_match.unwrap();
     let maps: Vec<String> = get_maps(&context).await;
     let mut setup: Setup = Setup {
@@ -205,30 +159,64 @@ pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
         match_id: Some(current_match.id),
         veto_pick_order: vec![],
         current_step: 0,
-        current_phase: MapVeto,
+        current_phase: ServerPick,
         server_id: None,
     };
+    let match_servers = get_servers(context).await;
+    let m = msg
+        .channel_id
+        .send_message(&context, |m| {
+            m.content(format!("Starting setup. <@&{}> selects server.", setup.team_two.unwrap())).components(|c|
+                c.add_action_row(create_server_action_row(&match_servers)))
+        })
+        .await
+        .unwrap();
+
     let result = match current_match.series_type {
         SeriesType::Bo1 => { handle_bo1_setup(setup.clone()).await }
         SeriesType::Bo3 => { handle_bo3_setup(setup.clone()).await }
         SeriesType::Bo5 => { handle_bo5_setup(setup.clone()).await }
     };
     setup.veto_pick_order = result.0;
-    let init_msg = result.1;
-    let m = msg
-        .channel_id
-        .send_message(&context, |m| {
-            m.content(init_msg).components(|c|
-                c.add_action_row(create_map_action_row(setup.maps_remaining.clone())))
-        })
-        .await
-        .unwrap();
+    let init_veto_msg = result.1;
 
     // Wait for the user to make a selection
     let mut cib = m.await_component_interactions(&context).build();
-
     while let Some(mci) = cib.next().await {
         match setup.current_phase {
+            ServerPick => {
+                if let Ok(role_id) = user_team_author(&context, &setup, &mci).await {
+                    if setup.team_two.unwrap() != role_id as i64 {
+                        mci.create_interaction_response(&context, |r| {
+                            r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+                                |d| {
+                                    d.ephemeral(true).content("It is not your team's turn to pick or ban a server")
+                                },
+                            )
+                        }).await.unwrap();
+                        continue;
+                    }
+                    let server_id = mci.data.values.get(0).unwrap();
+                    setup.server_id = Some(server_id.clone());
+                    mci.create_interaction_response(&context, |r| {
+                        r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
+                            |d| {
+                                d.content(&init_veto_msg).components(|c|
+                                    c.add_action_row(create_map_action_row(setup.maps_remaining.clone())))
+                            },
+                        )
+                    }).await.unwrap();
+                    setup.current_phase = MapVeto;
+                } else {
+                    mci.create_interaction_response(&context, |r| {
+                        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+                            |d| {
+                                d.ephemeral(true).content("You are not part of either team currently setting up a match")
+                            },
+                        )
+                    }).await.unwrap();
+                }
+            }
             MapVeto => {
                 let map_selected = mci.data.values.get(0).unwrap();
                 let step_type = match setup.veto_pick_order[setup.current_step].step_type {
@@ -336,7 +324,8 @@ pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
                     if setup.maps.len() == setup.current_step {
                         msg.channel_id.send_message(&context, |m| m.content("Match setup completed, starting server...")).await.unwrap();
                         m.delete(&context).await.expect("Expected message to delete");
-                        handle_server_start(&context, msg, &setup);
+                        start_server(&context, msg, &setup);
+                        finish_setup(&context, &setup).await;
                     }
                 } else {
                     mci.create_interaction_response(&context, |r| {
@@ -348,160 +337,8 @@ pub(crate) async fn handle_new_setup(context: &Context, msg: &Message) {
                     }).await.unwrap();
                 }
             }
-            _ => {}
         }
     }
-}
-
-fn handle_server_start(context: &Context, msg: &Message, setup: &Setup) {
-    println!("{:#?}", setup);
-}
-
-pub(crate) async fn handle_attack_option(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    if let Err(_err) = is_phase_allowed(context, msg, SidePick).await {
-        return String::from("It is not the side pick phase");
-    }
-    let mut resp = String::new();
-    if let Ok(user_role_id) = user_team(context, msg).await {
-        let mut data = context.data.write().await;
-        let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-        if setup.maps[setup.current_step].picked_by == user_role_id as i64 {
-            return String::from("It is not your turn to pick sides");
-        }
-        let picked_role_id = user_role_id;
-        setup.maps[setup.current_step].start_attack_team_role_id = Some(user_role_id as i64);
-        setup.maps[setup.current_step].start_defense_team_role_id = Option::from(if setup.clone().team_two.unwrap() == setup.maps[setup.current_step].start_attack_team_role_id.clone().unwrap() {
-            setup.clone().team_one.unwrap() as i64
-        } else {
-            setup.clone().team_two.unwrap() as i64
-        });
-        if setup.maps.len() - 1 > setup.current_step {
-            let next_pick = if setup.clone().team_two.unwrap() == setup.maps[setup.current_step + 1].picked_by {
-                setup.clone().team_one
-            } else {
-                setup.clone().team_two
-            };
-            resp = format!("<@&{}> picked to start `attack` on `{}`. It is now <@&{}>'s turn to pick starting side on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase(), next_pick.unwrap(), setup.maps[setup.current_step + 1].map.to_lowercase());
-            setup.current_step += 1;
-            return resp;
-        } else {
-            resp = format!("<@&{}> picked to start `attack` on `{}`", &picked_role_id, setup.maps[setup.current_step].map.to_lowercase());
-            resp.push_str(eos_printout(setup.clone()).as_str());
-        };
-    }
-    finish_setup(context).await;
-    if resp == String::new() {
-        return String::from("There was an issue processing this option");
-    }
-    resp
-}
-
-
-pub(crate) async fn handle_pick_option(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    if let Err(err) = is_phase_allowed(context, msg, MapVeto).await {
-        return err;
-    }
-    {
-        let data = context.data.write().await;
-        let setup: &Setup = data.get::<Setup>().unwrap();
-        if setup.veto_pick_order.get(setup.current_step).unwrap().step_type != Pick {
-            return String::from("It is not your turn to pick");
-        }
-    }
-    if let Ok(user_role_id) = user_team(context, msg).await {
-        let mut data = context.data.write().await;
-        let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-        if setup.veto_pick_order.get(setup.current_step).unwrap().team_role_id != user_role_id as i64 {
-            return String::from("It is not your turn to pick");
-        }
-        let option = msg.data
-            .options
-            .get(0)
-            .expect("Expected map name option")
-            .resolved
-            .as_ref()
-            .expect("Expected object");
-        if let CommandDataOptionValue::String(map) = option {
-            if !setup.maps_remaining.contains(&map) {
-                return String::from("Select a remaining map");
-            }
-            setup.veto_pick_order[setup.current_step].map = Some(String::from(map));
-            let map_index = setup.maps_remaining.iter().position(|m| m == map).unwrap();
-            setup.maps_remaining.remove(map_index);
-            let picked_by_team = setup.veto_pick_order[setup.current_step].team_role_id.clone();
-            setup.maps.push(SetupMap {
-                match_id: setup.match_id.unwrap(),
-                map: map.clone(),
-                picked_by: picked_by_team.clone(),
-                start_attack_team_role_id: None,
-                start_defense_team_role_id: None,
-            });
-            let mut resp = format!("<@&{}> picked `{}`. Maps remaining:\n", &picked_by_team, map.to_lowercase());
-            let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
-            resp.push_str(map_str.as_str());
-            setup.current_step += 1;
-            if setup.current_step >= setup.veto_pick_order.len() {
-                setup.current_phase = SidePick;
-                resp = format!("<@&{}> picked `{}`. Map veto has concluded.\n\nTeams will now pick starting sides.\n", &picked_by_team, map.to_lowercase());
-                setup.current_step = 0;
-                resp.push_str(format!("It is <@&{}>'s turn to pick starting side for `{}`\nUse `/t` or `/ct` to select starting side", setup.clone().team_two.unwrap(), setup.maps[0].map.to_lowercase()).as_str());
-                return resp;
-            }
-            resp.push_str(format!("It is <@&{}>'s turn to `{}`", setup.veto_pick_order[setup.current_step].team_role_id, setup.veto_pick_order[setup.current_step].step_type.to_string()).as_str());
-            return resp;
-        }
-    }
-    String::from("There was an issue picking a map")
-}
-
-pub(crate) async fn handle_ban_option(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    if let Err(err) = is_phase_allowed(context, msg, MapVeto).await {
-        return err;
-    }
-    {
-        let data = context.data.write().await;
-        let setup: &Setup = data.get::<Setup>().unwrap();
-        if setup.veto_pick_order.get(setup.current_step).unwrap().step_type != Veto {
-            return String::from("It is not your turn to ban");
-        }
-    }
-    if let Ok(user_role_id) = user_team(context, msg).await {
-        let mut data = context.data.write().await;
-        let setup: &mut Setup = data.get_mut::<Setup>().unwrap();
-        if setup.veto_pick_order.get(setup.current_step).unwrap().team_role_id != user_role_id as i64 {
-            return String::from("It is not your turn to ban");
-        }
-        let option = msg.data
-            .options
-            .get(0)
-            .expect("Expected map name option")
-            .resolved
-            .as_ref()
-            .expect("Expected object");
-        if let CommandDataOptionValue::String(map) = option {
-            if !setup.maps_remaining.contains(&map) {
-                return String::from("Select a remaining map");
-            }
-            setup.veto_pick_order[setup.current_step].map = Some(String::from(map));
-            let map_index = setup.maps_remaining.iter().position(|m| m == map).unwrap();
-            setup.maps_remaining.remove(map_index);
-            let banned_by_team = setup.veto_pick_order[setup.current_step].team_role_id.clone();
-            let mut resp = format!("<@&{}> banned `{}`. Maps remaining:\n", &banned_by_team, map);
-            let map_str: String = setup.maps_remaining.iter().map(|map| format!("- `{}`\n", map.to_lowercase())).collect();
-            resp.push_str(map_str.as_str());
-            setup.current_step += 1;
-            if setup.current_step >= setup.veto_pick_order.len() {
-                setup.current_phase = SidePick;
-                setup.current_step = 0;
-                resp = String::from("Map veto has concluded. Teams will now pick starting sides. \n");
-                resp.push_str(format!("It is <@&{}>'s turn to pick starting side for `{}`\nUse `/t` or `/ct` to select starting side", setup.clone().team_two.unwrap(), setup.maps[0].map.to_lowercase()).as_str());
-                return resp;
-            }
-            resp.push_str(format!("It is <@&{}>'s turn to `{}`", setup.veto_pick_order[setup.current_step].team_role_id, setup.veto_pick_order[setup.current_step].step_type.to_string()).as_str());
-            return resp;
-        }
-    }
-    String::from("There was an issue banning a map")
 }
 
 pub(crate) async fn handle_map_list(context: &Context) -> String {
@@ -732,17 +569,3 @@ pub(crate) async fn handle_steam_id(context: &Context, inc_command: &Application
     }
     return String::from("Discord API error");
 }
-
-pub(crate) async fn handle_cancel(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    let admin_check = admin_check(context, msg).await;
-    if let Err(error) = admin_check { return error; }
-    let maps = get_maps(context).await;
-    let mut data = context.data.write().await;
-    let draft: &mut Setup = data.get_mut::<Setup>().unwrap();
-    if draft.current_phase == Idle {
-        return String::from(" command only valid during `/setup` process");
-    }
-    reset_setup(draft, maps);
-    String::from("`/setup` process cancelled.")
-}
-

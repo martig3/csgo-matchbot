@@ -20,7 +20,7 @@ use serenity::model::application::interaction::{Interaction, InteractionResponse
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use match_bot::models::{Match, SeriesType, StepType};
-use crate::commands::{handle_buttons_test, handle_new_setup};
+use crate::commands::{handle_buttons_test};
 
 mod commands;
 mod utils;
@@ -67,7 +67,7 @@ pub struct SetupMap {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Setup {
+pub struct Setup {
     team_one: Option<i64>,
     team_two: Option<i64>,
     maps_remaining: Vec<String>,
@@ -81,17 +81,15 @@ struct Setup {
     server_id: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-enum State {
-    Idle,
+#[derive(Debug, Copy, PartialEq, Serialize, Deserialize, Clone)]
+pub enum State {
     MapVeto,
     SidePick,
-    Setup,
+    ServerPick,
 }
 
 struct Handler;
 
-struct BotState;
 
 struct Maps;
 
@@ -102,10 +100,6 @@ struct DBConnectionPool;
 
 impl TypeMapKey for Config {
     type Value = Config;
-}
-
-impl TypeMapKey for BotState {
-    type Value = State;
 }
 
 impl TypeMapKey for Maps {
@@ -126,18 +120,12 @@ impl TypeMapKey for DBConnectionPool {
 
 enum Command {
     SteamId,
-    Setup,
     Schedule,
     Addmatch,
     Deletematch,
     Match,
     Matches,
     Maps,
-    Cancel,
-    Defense,
-    Attack,
-    Pick,
-    Ban,
     Help,
 }
 
@@ -146,18 +134,12 @@ impl FromStr for Command {
     fn from_str(input: &str) -> Result<Command, Self::Err> {
         match input {
             "steamid" => Ok(Command::SteamId),
-            "setup" => Ok(Command::Setup),
             "schedule" => Ok(Command::Schedule),
             "addmatch" => Ok(Command::Addmatch),
             "deletematch" => Ok(Command::Deletematch),
             "match" => Ok(Command::Match),
             "matches" => Ok(Command::Matches),
             "maps" => Ok(Command::Maps),
-            "cancel" => Ok(Command::Cancel),
-            "ct" => Ok(Command::Defense),
-            "t" => Ok(Command::Attack),
-            "pick" => Ok(Command::Pick),
-            "ban" => Ok(Command::Ban),
             "help" => Ok(Command::Help),
             _ => Err(()),
         }
@@ -168,10 +150,6 @@ impl FromStr for Command {
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.author.bot {
-            return;
-        }
-        if msg.content == ".newsetup" {
-            handle_new_setup(&ctx, &msg).await;
             return;
         }
         if msg.content == ".buttons" {
@@ -329,23 +307,20 @@ impl EventHandler for Handler {
             if let Ok(normal_command) = Command::from_str(&command) {
                 let content: String = match normal_command {
                     Command::SteamId => commands::handle_steam_id(&context, &inc_command).await,
-                    Command::Setup => commands::handle_setup(&context, &inc_command).await,
                     Command::Addmatch => commands::handle_add_match(&context, &inc_command).await,
                     Command::Deletematch => commands::handle_delete_match(&context, &inc_command).await,
                     Command::Schedule => commands::handle_schedule(&context, &inc_command).await,
                     Command::Match => commands::handle_match(&context, &inc_command).await,
                     Command::Matches => commands::handle_matches(&context, &inc_command).await,
                     Command::Maps => commands::handle_map_list(&context).await,
-                    Command::Defense => commands::handle_defense_option(&context, &inc_command).await,
-                    Command::Attack => commands::handle_attack_option(&context, &inc_command).await,
-                    Command::Pick => commands::handle_pick_option(&context, &inc_command).await,
-                    Command::Ban => commands::handle_ban_option(&context, &inc_command).await,
-                    Command::Cancel => commands::handle_cancel(&context, &inc_command).await,
                     Command::Help => commands::handle_help(&context, &inc_command).await,
                 };
                 if let Err(why) = create_int_resp(&context, &inc_command, content).await {
                     eprintln!("Cannot respond to slash command: {}", why);
                 }
+            }
+            if command == "setup" {
+                commands::handle_setup(&context, &inc_command).await;
             }
         }
     }
@@ -376,19 +351,6 @@ async fn main() {
         let mut data = client.data.write().await;
         data.insert::<Config>(config);
         data.insert::<DBConnectionPool>(get_connection_pool());
-        data.insert::<BotState>(State::Idle);
-        data.insert::<Setup>(Setup {
-            team_one: None,
-            team_two: None,
-            maps: Vec::new(),
-            vetoes: Vec::new(),
-            maps_remaining: Vec::new(),
-            series_type: Bo3,
-            match_id: None,
-            veto_pick_order: Vec::new(),
-            current_step: 0,
-            current_phase: State::Idle,
-        });
     }
     if let Err(why) = client.start().await {
         println!("Client error: {:?}", why);
