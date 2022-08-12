@@ -11,6 +11,8 @@ use crate::MatchState::Completed;
 use crate::schema::maps::dsl::maps;
 use crate::schema::match_servers::dsl::match_servers;
 use crate::schema::matches::{match_state, scheduled_time_str};
+use crate::schema::users::discord_id;
+use crate::schema::users::dsl::users;
 
 pub mod schema;
 pub mod models;
@@ -27,6 +29,14 @@ pub fn create_user<'a>(conn: &PgConnection, discord_id: &i64, steam_id: &str) ->
         .values(&new_user)
         .get_result(conn)
         .expect("Error saving new user")
+}
+
+
+pub fn get_user_by_discord_id<'a>(conn: &PgConnection, id: &i64) -> User {
+    users
+        .filter(discord_id.eq(id))
+        .first::<User>(conn)
+        .expect("Expected user")
 }
 
 pub fn create_match<'a>(conn: &PgConnection, new_match: NewMatch) -> usize {

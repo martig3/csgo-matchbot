@@ -1,19 +1,25 @@
 use std::borrow::Borrow;
 use std::sync::Arc;
+use std::time::Duration;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
-use serenity::builder::{CreateActionRow, CreateButton, CreateSelectMenu, CreateSelectMenuOption};
-use serenity::model::application::component::ButtonStyle;
+use reqwest::{Client, Error};
+use serenity::builder::{CreateActionRow, CreateButton, CreateInputText, CreateSelectMenu, CreateSelectMenuOption};
+use serenity::model::application::component::{ButtonStyle, InputTextStyle};
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::application::interaction::message_component::MessageComponentInteraction;
-use serenity::model::channel::ReactionType;
+use serenity::model::channel::{Message, ReactionType};
+use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
-use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, get_match_servers};
-use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap};
-use crate::{Config, DBConnectionPool, Match, Setup, SetupStep, State};
+use urlencoding::encode;
+use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, get_match_servers, get_user_by_discord_id};
+use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap, SeriesType};
+use crate::{Config, DBConnectionPool, Match, Setup, SetupStep};
+use crate::dathost_models::DathostServerDuplicateResponse;
 use crate::StepType::{Pick, Veto};
 
 pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
@@ -73,12 +79,6 @@ pub(crate) async fn get_servers(context: &Context) -> Vec<MatchServer> {
     let conn = get_pg_conn(&context).await;
     let servers = get_match_servers(&conn);
     servers
-}
-
-pub(crate) async fn get_setup(context: &Context) -> Setup {
-    let data = context.data.write().await;
-    let setup_final: Setup = data.get::<Setup>().unwrap().clone();
-    setup_final
 }
 
 pub(crate) async fn finish_setup(context: &Context, setup_final: &Setup) {
@@ -271,6 +271,137 @@ pub fn create_menu_option(label: &String, value: &String) -> CreateSelectMenuOpt
     opt
 }
 
-pub fn start_server(context: &Context, msg: &ApplicationCommandInteraction, setup: &Setup) {
+pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setup) -> Result<String, Error> {
     println!("{:#?}", setup);
+
+    let client = Client::new();
+    let dupl_url = format!("https://dathost.com/api/0.1/game-servers/{}/duplicate", setup.server_id.clone().unwrap());
+    let resp = client
+        .post(dupl_url)
+        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .send()
+        .await
+        .unwrap()
+        .json::<DathostServerDuplicateResponse>()
+        .await;
+    if let Err(err) = resp {
+        return Err(err);
+    }
+    let server_id = resp.unwrap().id;
+    let users: Vec<User> = context.cache.guild(guild_id).unwrap().members.iter()
+        .map(|u| u.1.user.clone())
+        .collect();
+    let mut team_one_users = Vec::new();
+    let mut team_two_users = Vec::new();
+    for u in users {
+        if u.has_role(&context, guild_id, setup.team_one.unwrap() as u64).await.unwrap() {
+            team_one_users.push(u.clone());
+        }
+        if u.has_role(&context, guild_id, setup.team_two.unwrap() as u64).await.unwrap() {
+            team_two_users.push(u.clone());
+        }
+    }
+    let conn = get_pg_conn(&context).await;
+    setup.team_one_conn_str = Some(map_steamid_strings(team_one_users, &conn));
+    setup.team_two_conn_str = Some(map_steamid_strings(team_two_users, &conn));
+    match setup.series_type {
+        SeriesType::Bo1 => { start_match(server_id, setup, client).await }
+        SeriesType::Bo3 => {}
+        SeriesType::Bo5 => {}
+    }
+    Ok(resp.unwrap().ip)
+}
+
+pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
+    let start_match_url = String::from("https://dathost.net/api/0.1/matches");
+    let mut team_ct = String::new();
+    let mut team_t = String::new();
+    let mut team_ct_name = String::new();
+    let mut team_t_name = String::new();
+    let new_match = setup.maps[0].clone();
+    if setup.maps[0].start_defense_team_role_id == setup.team_one {
+        team_ct = setup.team_one_conn_str.unwrap();
+        team_ct_name = setup.team_one_name.clone();
+        team_t = setup.team_two_conn_str.unwrap();
+        team_t_name = setup.team_two_name.clone();
+    } else {
+        team_ct = setup.team_two_conn_str.unwrap();
+        team_ct_name = setup.team_two_name.clone();
+        team_t = setup.team_one_conn_str.unwrap();
+        team_t_name = setup.team_one_name.clone();
+    }
+    let resp = client
+        .post(&start_match_url)
+        .form(&[
+            ("map", &&new_match.map),
+            ("game_server_id", &&server_id),
+            ("team1_name", &&team_t_name),
+            ("team2_name", &&team_ct_name),
+            ("team1_steam_ids", &&team_t),
+            ("team2_steam_ids", &&team_ct),
+            ("enable_pause", &&String::from("true")),
+            ("enable_tech_pause", &&String::from("true")),
+        ])
+        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .send()
+        .await
+        .unwrap();
+    println!("Start match response code - {}", &resp.status());
+}
+
+pub async fn start_series_match() {}
+
+pub fn map_steamid_strings(users: Vec<User>, conn: &PooledConnection<ConnectionManager<PgConnection>>) -> String {
+    let str = users.iter()
+        .map(|u| get_user_by_discord_id(conn, &(u.id as i64)).steam_id)
+        .map(|mut s| {
+            s.replace_range(6..7, "1");
+            s
+        })
+        .map(|s| format!("{},", s))
+        .collect();
+    str
+}
+
+pub async fn create_conn_message(context: &Context, msg: &Message, url: String) {
+    let client = Client::new();
+    let port_start = &url.find(':').unwrap_or(0_usize) + 1;
+    let gotv_port = String::from(&url[port_start..url.len()]).parse::<i64>().unwrap_or(0) + 1;
+    let gotv_url = format!("{}{}", &url[0..port_start], gotv_port);
+    let url_link = format!("steam://connect/{}", &url);
+    let gotv_link = format!("steam://connect/{}", &gotv_url);
+    let resp = client
+        .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&url_link)))
+        .send()
+        .await
+        .unwrap();
+    let t_url = resp.text_with_charset("utf-8").await.unwrap();
+    let resp = client
+        .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&gotv_link)))
+        .send()
+        .await
+        .unwrap();
+    let t_gotv_url = resp.text_with_charset("utf-8").await.unwrap();
+
+    let m = msg.channel_id.send_message(&context, |m| m.content("Server started!")
+        .components(|c|
+            c.add_action_row(
+                create_server_conn_button_row(&t_url, &t_gotv_url)
+            )),
+    ).await.unwrap();
+    let mci =
+        match m.await_component_interaction(&context).timeout(Duration::from_secs(3_600)).await {
+            Some(ci) => ci,
+            None => {
+                m.reply(&context, "Timed out").await.unwrap();
+                return;
+            }
+        };
+    mci.create_interaction_response(&context, |r| {
+        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
+            d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &url, &gotv_url))
+        })
+    })
+        .await
+        .unwrap();
 }

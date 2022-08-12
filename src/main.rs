@@ -12,7 +12,7 @@ use serenity::framework::standard::StandardFramework;
 use serenity::model::prelude::GuildId;
 use serenity::model::prelude::Ready;
 use serenity::prelude::{EventHandler, GatewayIntents, TypeMapKey};
-use crate::SeriesType::Bo3;
+
 use r2d2::{Pool};
 use r2d2_diesel::ConnectionManager;
 use serenity::model::application::command::{CommandOptionType};
@@ -24,6 +24,7 @@ use crate::commands::{handle_buttons_test};
 
 mod commands;
 mod utils;
+mod dathost_models;
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -70,6 +71,10 @@ pub struct SetupMap {
 pub struct Setup {
     team_one: Option<i64>,
     team_two: Option<i64>,
+    team_one_name: String,
+    team_two_name: String,
+    team_one_conn_str: Option<String>,
+    team_two_conn_str: Option<String>,
     maps_remaining: Vec<String>,
     maps: Vec<SetupMap>,
     vetoes: Vec<Veto>,
@@ -126,7 +131,6 @@ enum Command {
     Match,
     Matches,
     Maps,
-    Help,
 }
 
 impl FromStr for Command {
@@ -140,7 +144,6 @@ impl FromStr for Command {
             "match" => Ok(Command::Match),
             "matches" => Ok(Command::Matches),
             "maps" => Ok(Command::Maps),
-            "help" => Ok(Command::Help),
             _ => Err(()),
         }
     }
@@ -163,18 +166,6 @@ impl EventHandler for Handler {
             return commands
                 .create_application_command(|command| {
                     command.name("maps").description("Lists the current map pool")
-                })
-                .create_application_command(|command| {
-                    command.name("cancel").description("Cancels setup (requires admin)")
-                })
-                .create_application_command(|command| {
-                    command.name("t").description("Select T starting side")
-                })
-                .create_application_command(|command| {
-                    command.name("ct").description("Select CT starting side")
-                })
-                .create_application_command(|command| {
-                    command.name("help").description("DM yourself help info")
                 })
                 .create_application_command(|command| {
                     command.name("steamid").description("Set your steamID").create_option(|option| {
@@ -221,41 +212,6 @@ impl EventHandler for Handler {
                 })
                 .create_application_command(|command| {
                     command.name("setup").description("Setup your next match")
-                })
-                .create_application_command(|command| {
-                    command.name("newsetup").description("Setup your next match")
-                })
-                .create_application_command(|command| {
-                    command.name("pick").description("Pick a map during the map veto").create_option(|option| {
-                        option
-                            .name("map")
-                            .description("Map name")
-                            .kind(CommandOptionType::String)
-                            .required(true)
-                            .add_string_choice("de_dust2", "de_dust2")
-                            .add_string_choice("de_inferno", "de_inferno")
-                            .add_string_choice("de_vertigo", "de_vertigo")
-                            .add_string_choice("de_overpass", "de_overpass")
-                            .add_string_choice("de_mirage", "de_mirage")
-                            .add_string_choice("de_ancient", "de_ancient")
-                            .add_string_choice("de_nuke", "de_nuke")
-                    })
-                })
-                .create_application_command(|command| {
-                    command.name("ban").description("Ban a map during the map veto").create_option(|option| {
-                        option
-                            .name("map")
-                            .description("Map name")
-                            .kind(CommandOptionType::String)
-                            .required(true)
-                            .add_string_choice("de_dust2", "de_dust2")
-                            .add_string_choice("de_inferno", "de_inferno")
-                            .add_string_choice("de_vertigo", "de_vertigo")
-                            .add_string_choice("de_overpass", "de_overpass")
-                            .add_string_choice("de_mirage", "de_mirage")
-                            .add_string_choice("de_ancient", "de_ancient")
-                            .add_string_choice("de_nuke", "de_nuke")
-                    })
                 })
                 .create_application_command(|command| {
                     command.name("addmatch").description("Add match to schedule (admin required)").create_option(|option| {
@@ -313,7 +269,6 @@ impl EventHandler for Handler {
                     Command::Match => commands::handle_match(&context, &inc_command).await,
                     Command::Matches => commands::handle_matches(&context, &inc_command).await,
                     Command::Maps => commands::handle_map_list(&context).await,
-                    Command::Help => commands::handle_help(&context, &inc_command).await,
                 };
                 if let Err(why) = create_int_resp(&context, &inc_command, content).await {
                     eprintln!("Cannot respond to slash command: {}", why);

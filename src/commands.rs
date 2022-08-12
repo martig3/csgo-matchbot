@@ -1,11 +1,12 @@
 use std::borrow::Borrow;
 use std::convert::TryFrom;
+use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
 use async_std::prelude::StreamExt;
 use chrono::{Local};
 use regex::Regex;
-use urlencoding::encode;
+use reqwest::Error;
 
 use serenity::client::Context;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
@@ -21,7 +22,7 @@ use crate::Setup;
 use crate::SetupMap;
 use crate::State::{MapVeto, SidePick, ServerPick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{find_user_team_role, start_server};
+use crate::utils::{create_conn_message, find_user_team_role, start_server};
 use crate::utils::admin_check;
 use crate::utils::get_maps;
 use crate::utils::finish_setup;
@@ -40,85 +41,6 @@ use crate::utils::get_servers;
 use crate::utils::create_server_action_row;
 
 
-pub(crate) async fn handle_help(context: &Context, msg: &ApplicationCommandInteraction) -> String {
-    let mut commands = String::from("
-`/setup` - start user's team's next match setup
-`/schedule` - schedule match
-`/matches` - list matches
-`/maps` - list maps
-`/ct` - pick CT side during side pick phase
-`/t`- pick T side during side pick phase
-`/pick` - pick map during map veto phase
-`/ban` - ban map during map veto phase
-`/help` - DMs you help text
-");
-    let admin_commands = String::from("
-_These are privileged admin commands:_
-`/addmatch` - add match to schedule
-`/deletematch`- delete match from schedule
-`/cancel` - cancel setup
-    ");
-    let admin_check = admin_check(context, msg).await;
-    if let Ok(_result_str) = admin_check {
-        commands.push_str(&admin_commands)
-    }
-    let response = MessageBuilder::new()
-        .push(commands)
-        .build();
-    if let Ok(channel) = &msg.user.create_dm_channel(&context.http).await {
-        if let Err(why) = channel.say(&context.http, &response).await {
-            eprintln!("Error sending message: {:?}", why);
-        }
-    } else {
-        eprintln!("Error sending .help dm");
-    }
-    String::from("Help info sent via DM")
-}
-
-pub async fn handle_buttons_test(context: &Context, msg: &Message) {
-    let client = reqwest::Client::new();
-    let url = "104.128.60.20:27015";
-    let port_start = &url.find(':').unwrap_or(0_usize) + 1;
-    let gotv_port = String::from(&url[port_start..url.len()]).parse::<i64>().unwrap_or(0) + 1;
-    let gotv_url = format!("{}{}", &url[0..port_start], gotv_port);
-    let url_link = format!("steam://connect/{}", &url);
-    let gotv_link = format!("steam://connect/{}", &gotv_url);
-    let resp = client
-        .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&url_link)))
-        .send()
-        .await
-        .unwrap();
-    let t_url = resp.text_with_charset("utf-8").await.unwrap();
-    let resp = client
-        .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&gotv_link)))
-        .send()
-        .await
-        .unwrap();
-    let t_gotv_url = resp.text_with_charset("utf-8").await.unwrap();
-
-    let m = msg.channel_id.send_message(&context, |m| m.content("Server started!")
-        .components(|c|
-            c.add_action_row(
-                create_server_conn_button_row(&t_url, &t_gotv_url)
-            )),
-    ).await.unwrap();
-    let mci =
-        match m.await_component_interaction(&context).timeout(Duration::from_secs(3_600)).await {
-            Some(ci) => ci,
-            None => {
-                m.reply(&context, "Timed out").await.unwrap();
-                return;
-            }
-        };
-    mci.create_interaction_response(&context, |r| {
-        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
-            d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &url, &gotv_url))
-        })
-    })
-        .await
-        .unwrap();
-}
-
 pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInteraction) {
     let mut next_match = None;
     if let Ok(roles) = context.http.get_guild_roles(*msg.guild_id.unwrap().as_u64()).await {
@@ -130,7 +52,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
         msg.create_interaction_response(&context.http, |response| {
             response
                 .kind(InteractionResponseType::ChannelMessageWithSource)
-                .interaction_response_data(|message| message.content("You are not part of any team. Verify you have a role starting with `Team`"))
+                .interaction_response_data(|message| message.ephemeral(true).content("You are not part of any team. Verify you have a role starting with `Team`"))
         }).await.expect("Expected resp");
         return;
     }
@@ -138,7 +60,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
         msg.create_interaction_response(&context.http, |response| {
             response
                 .kind(InteractionResponseType::ChannelMessageWithSource)
-                .interaction_response_data(|message| message.content("Your team does not have any scheduled matches"))
+                .interaction_response_data(|message| message.ephemeral(true).content("Your team does not have any scheduled matches"))
         }).await.expect("Expected resp");
         return;
     }
@@ -154,6 +76,8 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
         maps: vec![],
         vetoes: vec![],
         series_type: current_match.series_type,
+        team_one_name: current_match.team_one_name,
+        team_two_name: current_match.team_two_name,
         team_one: Some(current_match.team_one_role_id.clone()),
         team_two: Some(current_match.team_two_role_id.clone()),
         match_id: Some(current_match.id),
@@ -161,12 +85,14 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
         current_step: 0,
         current_phase: ServerPick,
         server_id: None,
+        team_two_conn_str: None,
+        team_one_conn_str: None,
     };
     let match_servers = get_servers(context).await;
     let m = msg
         .channel_id
         .send_message(&context, |m| {
-            m.content(format!("Starting setup. <@&{}> selects server.", setup.team_two.unwrap())).components(|c|
+            m.content(format!("<@&{}> selects server.", setup.team_two.unwrap())).components(|c|
                 c.add_action_row(create_server_action_row(&match_servers)))
         })
         .await
@@ -322,10 +248,15 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                     }
                     setup.current_step = setup.current_step + 1;
                     if setup.maps.len() == setup.current_step {
-                        msg.channel_id.send_message(&context, |m| m.content("Match setup completed, starting server...")).await.unwrap();
+                        let new_msg = msg.channel_id.send_message(&context, |m| m.content("Match setup completed, starting server...")).await.unwrap();
                         m.delete(&context).await.expect("Expected message to delete");
-                        start_server(&context, msg, &setup);
-                        finish_setup(&context, &setup).await;
+                        match start_server(&context, msg.guild_id.clone().unwrap(), &mut setup).await {
+                            Ok(url) => {
+                                finish_setup(&context, &setup).await;
+                                create_conn_message(&context, &new_msg, url)
+                            }
+                            Err(err) => {}
+                        }
                     }
                 } else {
                     mci.create_interaction_response(&context, |r| {
