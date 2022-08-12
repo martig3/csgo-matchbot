@@ -23,16 +23,6 @@ Discord bot for managing & organizing team matches
 
 `/maps` - list maps
 
-`/cancel` - cancel setup
-
-`/ct` - pick CT side during side pick phase
-
-`/t`- pick T side during side pick phase
-
-`/pick` - pick map during map veto phase
-
-`/ban` - ban map during map veto phase
-
 `/help` - DMs you help text
 
 _These are privileged admin commands:_
