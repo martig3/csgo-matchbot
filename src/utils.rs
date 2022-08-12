@@ -287,7 +287,8 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     if let Err(err) = resp {
         return Err(err);
     }
-    let server_id = resp.unwrap().id;
+    let resp = resp.unwrap();
+    let server_id = resp.id.clone();
     let users: Vec<User> = context.cache.guild(guild_id).unwrap().members.iter()
         .map(|u| u.1.user.clone())
         .collect();
@@ -309,7 +310,7 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
         SeriesType::Bo3 => {}
         SeriesType::Bo5 => {}
     }
-    Ok(resp.unwrap().ip)
+    Ok(resp.ip)
 }
 
 pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
@@ -320,21 +321,21 @@ pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
     let mut team_t_name = String::new();
     let new_match = setup.maps[0].clone();
     if setup.maps[0].start_defense_team_role_id == setup.team_one {
-        team_ct = setup.team_one_conn_str.unwrap();
+        team_ct = setup.team_one_conn_str.clone().unwrap();
         team_ct_name = setup.team_one_name.clone();
-        team_t = setup.team_two_conn_str.unwrap();
+        team_t = setup.team_two_conn_str.clone().unwrap();
         team_t_name = setup.team_two_name.clone();
     } else {
-        team_ct = setup.team_two_conn_str.unwrap();
+        team_ct = setup.team_two_conn_str.clone().unwrap();
         team_ct_name = setup.team_two_name.clone();
-        team_t = setup.team_one_conn_str.unwrap();
+        team_t = setup.team_one_conn_str.clone().unwrap();
         team_t_name = setup.team_one_name.clone();
     }
     let resp = client
         .post(&start_match_url)
         .form(&[
-            ("map", &&new_match.map),
             ("game_server_id", &&server_id),
+            ("map", &&new_match.map),
             ("team1_name", &&team_t_name),
             ("team2_name", &&team_ct_name),
             ("team1_steam_ids", &&team_t),
@@ -353,7 +354,7 @@ pub async fn start_series_match() {}
 
 pub fn map_steamid_strings(users: Vec<User>, conn: &PooledConnection<ConnectionManager<PgConnection>>) -> String {
     let str = users.iter()
-        .map(|u| get_user_by_discord_id(conn, &(u.id as i64)).steam_id)
+        .map(|u| get_user_by_discord_id(conn, &i64::from(u.id)).steam_id)
         .map(|mut s| {
             s.replace_range(6..7, "1");
             s
@@ -390,7 +391,7 @@ pub async fn create_conn_message(context: &Context, msg: &Message, url: String) 
             )),
     ).await.unwrap();
     let mci =
-        match m.await_component_interaction(&context).timeout(Duration::from_secs(3_600)).await {
+        match m.await_component_interaction(&context).timeout(Duration::from_secs(600)).await {
             Some(ci) => ci,
             None => {
                 m.reply(&context, "Timed out").await.unwrap();

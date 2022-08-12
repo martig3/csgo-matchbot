@@ -20,7 +20,6 @@ use serenity::model::application::interaction::{Interaction, InteractionResponse
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::channel::Message;
 use match_bot::models::{Match, SeriesType, StepType};
-use crate::commands::{handle_buttons_test};
 
 mod commands;
 mod utils;
@@ -151,14 +150,6 @@ impl FromStr for Command {
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, ctx: Context, msg: Message) {
-        if msg.author.bot {
-            return;
-        }
-        if msg.content == ".buttons" {
-            handle_buttons_test(&ctx, &msg).await;
-        }
-    }
     async fn ready(&self, context: Context, ready: Ready) {
         let config = load_config().await.unwrap();
         let guild_id = GuildId(config.discord.guild_id);

@@ -253,7 +253,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                         match start_server(&context, msg.guild_id.clone().unwrap(), &mut setup).await {
                             Ok(url) => {
                                 finish_setup(&context, &setup).await;
-                                create_conn_message(&context, &new_msg, url)
+                                create_conn_message(&context, &new_msg, url).await;
                             }
                             Err(err) => {}
                         }
