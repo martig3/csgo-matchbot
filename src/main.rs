@@ -24,17 +24,24 @@ mod commands;
 mod utils;
 mod dathost_models;
 
-#[derive(Serialize, Deserialize)]
-struct Config {
-    discord: DiscordConfig,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub discord: DiscordConfig,
+    pub dathost: DathostConfig,
 }
 
-#[derive(Serialize, Deserialize)]
-struct DiscordConfig {
-    token: String,
-    admin_role_id: u64,
-    application_id: u64,
-    guild_id: u64,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DathostConfig {
+    pub user: String,
+    pub password: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DiscordConfig {
+    pub token: String,
+    pub admin_role_id: u64,
+    pub application_id: u64,
+    pub guild_id: u64,
 }
 
 #[derive(PartialEq)]
@@ -320,6 +327,10 @@ async fn load_config() -> Result<Config, serde_yaml::Error> {
             admin_role_id: option_env!("DISCORD_ADMIN_ROLE_ID").expect("DISCORD_ADMIN_ROLE_ID not defined").parse().unwrap(),
             application_id: option_env!("DISCORD_APPLICATION_ID").expect("DISCORD_APPLICATION_ID not defined").parse().unwrap(),
             guild_id: option_env!("DISCORD_GUILD_ID").expect("DISCORD_GUILD_ID not defined").parse().unwrap(),
+        },
+        dathost: DathostConfig {
+            user: option_env!("DATHOST_USER").expect("DATHOST_USER not defined").parse().unwrap(),
+            password: option_env!("DATHOST_PASSWORD").expect("DATHOST_PASSWORD not defined").parse().unwrap(),
         }
     };
     Ok(config)

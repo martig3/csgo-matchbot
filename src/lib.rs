@@ -145,7 +145,7 @@ pub fn get_fresh_token<'a>(conn: &PgConnection) -> GsltToken {
     gslt_tokens
         .filter(in_use.eq(false))
         .first::<GsltToken>(conn)
-        .expect("Expected match result")
+        .expect("Expected gslt token")
 }
 
 pub fn update_token<'a>(conn: &PgConnection, token: GsltToken) -> GsltToken {

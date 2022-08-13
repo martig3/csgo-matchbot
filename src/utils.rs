@@ -19,7 +19,7 @@ use urlencoding::encode;
 use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_token};
 use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap, SeriesType};
 use match_bot::models::SeriesType::Bo5;
-use crate::{Config, DBConnectionPool, Match, Setup, SetupStep};
+use crate::{Config, DathostConfig, DBConnectionPool, Match, Setup, SetupStep};
 use crate::dathost_models::DathostServerDuplicateResponse;
 use crate::StepType::{Pick, Veto};
 
@@ -283,12 +283,13 @@ pub fn create_menu_option(label: &String, value: &String) -> CreateSelectMenuOpt
 
 pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setup) -> Result<String, Error> {
     println!("{:#?}", setup);
+    let dathost_config = get_config(context).await.dathost;
     let conn = get_pg_conn(context).await;
     let client = Client::new();
     let dupl_url = format!("https://dathost.com/api/0.1/game-servers/{}/duplicate", setup.server_id.clone().unwrap());
     let resp = client
         .post(dupl_url)
-        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
         .await
         .unwrap()
@@ -306,7 +307,7 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
         .form(&[
             ("csgo_settings.steam_game_server_login_token", &&gslt.token),
         ])
-        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
         .await
         .unwrap();
@@ -331,14 +332,14 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     setup.team_one_conn_str = Some(map_steamid_strings(team_one_users, &conn));
     setup.team_two_conn_str = Some(map_steamid_strings(team_two_users, &conn));
     match setup.series_type {
-        SeriesType::Bo1 => { start_match(server_id, setup, client).await }
-        SeriesType::Bo3 => { start_series_match(server_id, setup, client).await }
-        SeriesType::Bo5 => { start_series_match(server_id, setup, client).await }
+        SeriesType::Bo1 => { start_match(server_id, setup, client, &dathost_config).await }
+        SeriesType::Bo3 => { start_series_match(server_id, setup, client, &dathost_config).await }
+        SeriesType::Bo5 => { start_series_match(server_id, setup, client, &dathost_config).await }
     }
     Ok(resp.ip)
 }
 
-pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
+pub async fn start_match(server_id: String, setup: &Setup, client: Client, dathost_config: &DathostConfig) {
     let start_match_url = String::from("https://dathost.net/api/0.1/matches");
     let team_ct: String;
     let team_t: String;
@@ -368,14 +369,14 @@ pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
             ("enable_pause", &&String::from("true")),
             ("enable_tech_pause", &&String::from("true")),
         ])
-        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
         .await
         .unwrap();
     println!("Start match response code - {}", &resp.status());
 }
 
-pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Client) {
+pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Client, dathost_config: &DathostConfig) {
     let start_match_url = String::from("https://dathost.net/api/0.1/matches");
     let true_val = &String::from("true");
     let team_one = setup.team_one_conn_str.clone().unwrap();
@@ -412,7 +413,7 @@ pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Cl
     let resp = client
         .post(&start_match_url)
         .form(&params)
-        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
         .await
         .unwrap();
@@ -472,4 +473,11 @@ pub async fn create_conn_message(context: &Context, msg: &Message, url: String, 
     })
         .await
         .unwrap();
+}
+
+pub async fn get_config(context: &Context) -> Config {
+    let data = context.data.write().await;
+    let config: &Config = data.get::<Config>().unwrap();
+    let c = config.clone();
+    c
 }
