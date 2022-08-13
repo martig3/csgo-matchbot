@@ -151,7 +151,7 @@ pub(crate) fn print_match_info(m: &Match, show_id: bool) -> String {
 pub(crate) fn eos_printout(setup: &Setup) -> String {
     let mut resp = String::from("\n\nSetup is completed. GLHF!\n\n");
     for (i, el) in setup.maps.iter().enumerate() {
-        resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _Defense start:_ <@&{}>\n    _Attack start:_ <@&{}>\n\n", i + 1, el.map.to_lowercase(), &el.picked_by, el.start_defense_team_role_id.clone().unwrap(), el.start_attack_team_role_id.clone().unwrap()).as_str())
+        resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _CT start:_ <@&{}>\n    _T start:_ <@&{}>\n\n", i + 1, el.map.to_lowercase(), &el.picked_by, el.start_defense_team_role_id.clone().unwrap(), el.start_attack_team_role_id.clone().unwrap()).as_str())
     }
     resp
 }
