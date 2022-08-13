@@ -3,11 +3,13 @@ extern crate diesel;
 
 use diesel::{BoolExpressionMethods, EqAll, OptionalExtension, PgConnection, QueryDsl, RunQueryDsl};
 use diesel::associations::HasTable;
-use crate::models::{Map, Match, MatchServer, MatchSetupStep, MatchState, NewMatch, NewMatchSetupStep, NewSeriesMap};
+use crate::models::{GsltToken, Map, Match, MatchServer, MatchSetupStep, MatchState, NewMatch, NewMatchSetupStep, NewSeriesMap};
 use crate::schema::matches::dsl::matches;
 use self::models::{User, NewUser};
 use crate::diesel::ExpressionMethods;
 use crate::MatchState::Completed;
+use crate::schema::gslt_tokens::dsl::gslt_tokens;
+use crate::schema::gslt_tokens::in_use;
 use crate::schema::maps::dsl::maps;
 use crate::schema::match_servers::dsl::match_servers;
 use crate::schema::matches::{match_state, scheduled_time_str};
@@ -137,4 +139,11 @@ pub fn get_match_servers<'a>(conn: &PgConnection) -> Vec<MatchServer> {
     match_servers
         .load::<MatchServer>(conn)
         .expect("Expected match server result")
+}
+
+pub fn get_fresh_token<'a>(conn: &PgConnection) -> GsltToken {
+    gslt_tokens
+        .filter(in_use.eq(false))
+        .first::<GsltToken>(conn)
+        .expect("Expected match result")
 }

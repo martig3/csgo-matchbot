@@ -1,12 +1,12 @@
-use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
 use reqwest::{Client, Error};
-use serenity::builder::{CreateActionRow, CreateButton, CreateInputText, CreateSelectMenu, CreateSelectMenuOption};
-use serenity::model::application::component::{ButtonStyle, InputTextStyle};
+use serenity::builder::{CreateActionRow, CreateButton, CreateSelectMenu, CreateSelectMenuOption};
+use serenity::model::application::component::{ButtonStyle};
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::InteractionResponseType;
@@ -16,8 +16,9 @@ use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use urlencoding::encode;
-use match_bot::{create_match_setup_steps, create_series_maps, get_map_pool, get_match_servers, get_user_by_discord_id};
+use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id};
 use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap, SeriesType};
+use match_bot::models::SeriesType::Bo5;
 use crate::{Config, DBConnectionPool, Match, Setup, SetupStep};
 use crate::dathost_models::DathostServerDuplicateResponse;
 use crate::StepType::{Pick, Veto};
@@ -147,7 +148,7 @@ pub(crate) fn print_match_info(m: &Match, show_id: bool) -> String {
     row
 }
 
-pub(crate) fn eos_printout(setup: Setup) -> String {
+pub(crate) fn eos_printout(setup: &Setup) -> String {
     let mut resp = String::from("\n\nSetup is completed. GLHF!\n\n");
     for (i, el) in setup.maps.iter().enumerate() {
         resp.push_str(format!("**{}. {}** - picked by: <@&{}>\n    _Defense start:_ <@&{}>\n    _Attack start:_ <@&{}>\n\n", i + 1, el.map.to_lowercase(), &el.picked_by, el.start_defense_team_role_id.clone().unwrap(), el.start_attack_team_role_id.clone().unwrap()).as_str())
@@ -155,6 +156,15 @@ pub(crate) fn eos_printout(setup: Setup) -> String {
     resp
 }
 
+pub async fn no_team_resp(context: &Context, mci: &Arc<MessageComponentInteraction>) {
+    mci.create_interaction_response(&context, |r| {
+        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
+            |d| {
+                d.ephemeral(true).content("You are not part of either team currently setting up a match")
+            },
+        )
+    }).await.unwrap();
+}
 
 pub(crate) async fn handle_bo1_setup(setup: Setup) -> (Vec<SetupStep>, String) {
     let match_id = setup.match_id.unwrap();
@@ -273,7 +283,7 @@ pub fn create_menu_option(label: &String, value: &String) -> CreateSelectMenuOpt
 
 pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setup) -> Result<String, Error> {
     println!("{:#?}", setup);
-
+    let conn = get_pg_conn(context).await;
     let client = Client::new();
     let dupl_url = format!("https://dathost.com/api/0.1/game-servers/{}/duplicate", setup.server_id.clone().unwrap());
     let resp = client
@@ -289,6 +299,17 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     }
     let resp = resp.unwrap();
     let server_id = resp.id.clone();
+
+    let gslt = get_fresh_token(&conn);
+    let resp = client
+        .put(format!("https://dathost.com/api/0.1/game-servers/{}", server_id))
+        .form(&[
+            ("csgo_settings.steam_game_server_login_token", &&gslt.token),
+        ])
+        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .send()
+        .await
+        .unwrap();
     let users: Vec<User> = context.cache.guild(guild_id).unwrap().members.iter()
         .map(|u| u.1.user.clone())
         .collect();
@@ -307,18 +328,18 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     setup.team_two_conn_str = Some(map_steamid_strings(team_two_users, &conn));
     match setup.series_type {
         SeriesType::Bo1 => { start_match(server_id, setup, client).await }
-        SeriesType::Bo3 => {}
-        SeriesType::Bo5 => {}
+        SeriesType::Bo3 => { start_series_match(server_id, setup, client).await }
+        SeriesType::Bo5 => { start_series_match(server_id, setup, client).await }
     }
     Ok(resp.ip)
 }
 
 pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
     let start_match_url = String::from("https://dathost.net/api/0.1/matches");
-    let mut team_ct = String::new();
-    let mut team_t = String::new();
-    let mut team_ct_name = String::new();
-    let mut team_t_name = String::new();
+    let team_ct: String;
+    let team_t: String;
+    let team_ct_name: String;
+    let team_t_name: String;
     let new_match = setup.maps[0].clone();
     if setup.maps[0].start_defense_team_role_id == setup.team_one {
         team_ct = setup.team_one_conn_str.clone().unwrap();
@@ -350,7 +371,49 @@ pub async fn start_match(server_id: String, setup: &Setup, client: Client) {
     println!("Start match response code - {}", &resp.status());
 }
 
-pub async fn start_series_match() {}
+pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Client) {
+    let start_match_url = String::from("https://dathost.net/api/0.1/matches");
+    let true_val = &String::from("true");
+    let team_one = setup.team_one_conn_str.clone().unwrap();
+    let team_one_name = setup.team_one_name.clone();
+    let team_two = setup.team_two_conn_str.clone().unwrap();
+    let team_two_name = setup.team_two_name.clone();
+    let mut params = HashMap::new();
+    let team_map = HashMap::from([
+        (setup.team_one.unwrap(), String::from("team1")),
+        (setup.team_two.unwrap(), String::from("team2"))
+    ]);
+    let mut num_maps = String::from("3");
+    params.insert("game_server_id", &server_id);
+    params.insert("enable_pause", true_val);
+    params.insert("enable_tech_pause", true_val);
+    params.insert("team1_name", &&team_one_name);
+    params.insert("team2_name", &&team_two_name);
+    params.insert("team1_steam_ids", &&team_one);
+    params.insert("team2_steam_ids", &&team_two);
+    params.insert("map1", &&setup.maps[0].map);
+    params.insert("map1_start_ct", team_map.get(&setup.maps[0].start_defense_team_role_id.unwrap()).unwrap());
+    params.insert("map2", &&setup.maps[1].map);
+    params.insert("map2_start_ct", team_map.get(&setup.maps[1].start_defense_team_role_id.unwrap()).unwrap());
+    params.insert("map3", &&setup.maps[2].map);
+    params.insert("map3_start_ct", team_map.get(&setup.maps[2].start_defense_team_role_id.unwrap()).unwrap());
+    if setup.series_type == Bo5 {
+        num_maps = String::from("5");
+        params.insert("map4", &&setup.maps[3].map);
+        params.insert("map4_start_ct", team_map.get(&setup.maps[3].start_defense_team_role_id.unwrap()).unwrap());
+        params.insert("map5", &&setup.maps[4].map);
+        params.insert("map5_start_ct", team_map.get(&setup.maps[4].start_defense_team_role_id.unwrap()).unwrap());
+    }
+    params.insert("number_of_maps", &num_maps);
+    let resp = client
+        .post(&start_match_url)
+        .form(&params)
+        .basic_auth(option_env!("DATHOST_USER").unwrap(), option_env!("DATHOST_PASSWORD"))
+        .send()
+        .await
+        .unwrap();
+    println!("Start match response code - {}", &resp.status());
+}
 
 pub fn map_steamid_strings(users: Vec<User>, conn: &PooledConnection<ConnectionManager<PgConnection>>) -> String {
     let str = users.iter()
@@ -364,7 +427,7 @@ pub fn map_steamid_strings(users: Vec<User>, conn: &PooledConnection<ConnectionM
     str
 }
 
-pub async fn create_conn_message(context: &Context, msg: &Message, url: String) {
+pub async fn create_conn_message(context: &Context, msg: &Message, url: String, setup: &Setup) {
     let client = Client::new();
     let port_start = &url.find(':').unwrap_or(0_usize) + 1;
     let gotv_port = String::from(&url[port_start..url.len()]).parse::<i64>().unwrap_or(0) + 1;
@@ -384,7 +447,7 @@ pub async fn create_conn_message(context: &Context, msg: &Message, url: String) 
         .unwrap();
     let t_gotv_url = resp.text_with_charset("utf-8").await.unwrap();
 
-    let m = msg.channel_id.send_message(&context, |m| m.content("Server started!")
+    let m = msg.channel_id.send_message(&context, |m| m.content(eos_printout(setup))
         .components(|c|
             c.add_action_row(
                 create_server_conn_button_row(&t_url, &t_gotv_url)

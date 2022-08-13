@@ -1,4 +1,11 @@
 table! {
+    gslt_tokens (token) {
+        token -> Varchar,
+        in_use -> Bool,
+    }
+}
+
+table! {
     maps (name) {
         name -> Varchar,
     }
@@ -59,6 +66,7 @@ joinable!(match_setup_step -> matches (match_id));
 joinable!(series_map -> matches (match_id));
 
 allow_tables_to_appear_in_same_query!(
+    gslt_tokens,
     maps,
     match_servers,
     match_setup_step,

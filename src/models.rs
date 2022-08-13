@@ -96,6 +96,12 @@ pub struct MatchServer {
 }
 
 #[derive(Queryable, Clone, Serialize, Deserialize)]
+pub struct GsltToken{
+    pub token: String,
+    pub in_use: bool,
+}
+
+#[derive(Queryable, Clone, Serialize, Deserialize)]
 pub struct Map {
     pub name: String,
 }
@@ -132,8 +138,8 @@ pub enum MatchState {
 
 #[derive(Debug)]
 pub struct CustomError {
-    msg: String,
-    status: u16,
+    pub msg: String,
+    pub status: u16,
 }
 
 impl CustomError {

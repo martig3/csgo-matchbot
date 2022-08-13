@@ -18,7 +18,6 @@ use r2d2_diesel::ConnectionManager;
 use serenity::model::application::command::{CommandOptionType};
 use serenity::model::application::interaction::{Interaction, InteractionResponseType};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
-use serenity::model::channel::Message;
 use match_bot::models::{Match, SeriesType, StepType};
 
 mod commands;
@@ -159,7 +158,7 @@ impl EventHandler for Handler {
                     command.name("maps").description("Lists the current map pool")
                 })
                 .create_application_command(|command| {
-                    command.name("steamid").description("Set your steamID").create_option(|option| {
+                    command.name("steamid").description("Set your SteamID").create_option(|option| {
                         option
                             .name("steamid")
                             .description("Your steamID, i.e. STEAM_0:1:12345678")

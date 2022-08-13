@@ -1,17 +1,13 @@
 use std::borrow::Borrow;
 use std::convert::TryFrom;
-use std::future::Future;
 use std::str::FromStr;
-use std::time::Duration;
 use async_std::prelude::StreamExt;
 use chrono::{Local};
 use regex::Regex;
-use reqwest::Error;
 
 use serenity::client::Context;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::InteractionResponseType;
-use serenity::model::channel::Message;
 use serenity::model::prelude::interaction::application_command::CommandDataOptionValue;
 use serenity::model::prelude::Role;
 use serenity::utils::MessageBuilder;
@@ -22,7 +18,7 @@ use crate::Setup;
 use crate::SetupMap;
 use crate::State::{MapVeto, SidePick, ServerPick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{create_conn_message, find_user_team_role, start_server};
+use crate::utils::{create_conn_message, find_user_team_role, no_team_resp, start_server};
 use crate::utils::admin_check;
 use crate::utils::get_maps;
 use crate::utils::finish_setup;
@@ -36,7 +32,6 @@ use crate::utils::print_veto_info;
 use crate::utils::create_map_action_row;
 use crate::utils::user_team_author;
 use crate::utils::create_sidepick_action_row;
-use crate::utils::create_server_conn_button_row;
 use crate::utils::get_servers;
 use crate::utils::create_server_action_row;
 
@@ -134,13 +129,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                     }).await.unwrap();
                     setup.current_phase = MapVeto;
                 } else {
-                    mci.create_interaction_response(&context, |r| {
-                        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
-                            |d| {
-                                d.ephemeral(true).content("You are not part of either team currently setting up a match")
-                            },
-                        )
-                    }).await.unwrap();
+                    no_team_resp(context, &mci).await;
                 }
             }
             MapVeto => {
@@ -204,13 +193,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                     }).await.unwrap();
                     setup.current_step = setup.current_step + 1;
                 } else {
-                    mci.create_interaction_response(&context, |r| {
-                        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
-                            |d| {
-                                d.ephemeral(true).content("You are not part of either team currently setting up a match")
-                            },
-                        )
-                    }).await.unwrap();
+                    no_team_resp(context, &mci).await;
                 }
             }
             SidePick => {
@@ -253,19 +236,13 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                         match start_server(&context, msg.guild_id.clone().unwrap(), &mut setup).await {
                             Ok(url) => {
                                 finish_setup(&context, &setup).await;
-                                create_conn_message(&context, &new_msg, url).await;
+                                create_conn_message(&context, &new_msg, url, &setup).await;
                             }
-                            Err(err) => {}
+                            Err(err) => {eprintln!("{:#?}", err)}
                         }
                     }
                 } else {
-                    mci.create_interaction_response(&context, |r| {
-                        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(
-                            |d| {
-                                d.ephemeral(true).content("You are not part of either team currently setting up a match")
-                            },
-                        )
-                    }).await.unwrap();
+                    no_team_resp(context, &mci).await;
                 }
             }
         }
