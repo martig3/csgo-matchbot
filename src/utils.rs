@@ -301,7 +301,7 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     let server_id = resp.id.clone();
 
     let gslt = get_fresh_token(&conn);
-    let resp = client
+    client
         .put(format!("https://dathost.com/api/0.1/game-servers/{}", server_id))
         .form(&[
             ("csgo_settings.steam_game_server_login_token", &&gslt.token),
