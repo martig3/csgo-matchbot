@@ -147,3 +147,11 @@ pub fn get_fresh_token<'a>(conn: &PgConnection) -> GsltToken {
         .first::<GsltToken>(conn)
         .expect("Expected match result")
 }
+
+pub fn update_token<'a>(conn: &PgConnection, token: GsltToken) -> GsltToken {
+    let updated_token = diesel::update(gslt_tokens.find(&token.token))
+        .set(in_use.eq(token.in_use))
+        .get_result::<GsltToken>(conn)
+        .expect(&format!("unable to find gslt token: {}", token.token));
+    updated_token
+}

@@ -16,7 +16,7 @@ use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use urlencoding::encode;
-use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id};
+use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_token};
 use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap, SeriesType};
 use match_bot::models::SeriesType::Bo5;
 use crate::{Config, DBConnectionPool, Match, Setup, SetupStep};
@@ -300,8 +300,8 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     let resp = resp.unwrap();
     let server_id = resp.id.clone();
 
-    let gslt = get_fresh_token(&conn);
-    client
+    let mut gslt = get_fresh_token(&conn);
+    let gslt_resp = client
         .put(format!("https://dathost.com/api/0.1/game-servers/{}", server_id))
         .form(&[
             ("csgo_settings.steam_game_server_login_token", &&gslt.token),
@@ -310,6 +310,10 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
         .send()
         .await
         .unwrap();
+    if gslt_resp.status() == 200 {
+        gslt.in_use = true;
+        update_token(&conn, gslt);
+    }
     let users: Vec<User> = context.cache.guild(guild_id).unwrap().members.iter()
         .map(|u| u.1.user.clone())
         .collect();
