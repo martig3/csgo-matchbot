@@ -1,29 +1,24 @@
 use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::str::FromStr;
-use std::time::SystemTime;
 use async_std::prelude::StreamExt;
-use chrono::{DateTime, Local, NaiveDateTime, Utc};
+use chrono::{Local, Utc};
 use regex::Regex;
-use reqwest::Client;
 
 use serenity::client::Context;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::InteractionResponseType;
-use serenity::model::guild::Guild;
 use serenity::model::prelude::interaction::application_command::CommandDataOptionValue;
-use serenity::model::prelude::{Role, User};
+use serenity::model::prelude::{Role};
 use serenity::utils::MessageBuilder;
-use urlencoding::encode;
 use match_bot::{create_match, create_user, delete_match, get_match, get_match_setup_steps, get_matches, get_next_team_match, update_match_schedule};
 use match_bot::models::{Match, MatchSetupStep, MatchState, NewMatch, SeriesType};
-use crate::dathost_models::DathostServerDuplicateResponse;
 
 use crate::Setup;
 use crate::SetupMap;
 use crate::State::{MapVeto, SidePick, ServerPick};
 use crate::StepType::{Pick, Veto};
-use crate::utils::{create_conn_message, find_user_team_role, get_config, no_team_resp, start_server};
+use crate::utils::{create_conn_message, find_user_team_role, no_team_resp, start_server};
 use crate::utils::admin_check;
 use crate::utils::get_maps;
 use crate::utils::finish_setup;
@@ -139,10 +134,6 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
             }
             MapVeto => {
                 let map_selected = mci.data.values.get(0).unwrap();
-                let step_type = match setup.veto_pick_order[setup.current_step].step_type {
-                    Veto => { String::from("banned") }
-                    Pick => { String::from("picked") }
-                };
                 if let Ok(role_id) = user_team_author(&context, &setup, &mci).await {
                     if setup.veto_pick_order.get(setup.current_step).unwrap().team_role_id != role_id as i64 {
                         mci.create_interaction_response(&context, |r| {
@@ -241,12 +232,13 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                         continue;
                     }
                     if setup.maps.len() != setup.current_step + 1 {
-                        let current_map = &setup.maps.get(setup.current_step).unwrap().map;
+                        let next_team_picked_by= &setup.maps.get(setup.current_step + 1).unwrap().picked_by;
+                        let next_team = if next_team_picked_by == &(setup.team_one.unwrap() as i64) { setup.team_two.unwrap() } else { setup.team_one.unwrap() };
                         let next_map = &setup.maps.get(setup.current_step + 1).unwrap().map;
                         mci.create_interaction_response(&context, |r| {
                             r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
                                 |d| {
-                                    d.content(format!("<@&{}> picked to start {} on `{}`\nIt is <@&{}> turn to pick starting side on {}", role_id, option_selected.to_uppercase(), current_map, not_picked_by, next_map))
+                                    d.content(format!("It is <@&{}> turn to pick starting side on {}", next_team, next_map))
                                         .components(|c| c.add_action_row(create_sidepick_action_row()))
                                 },
                             )

@@ -7,7 +7,7 @@ use crate::models::{GsltToken, Map, Match, MatchServer, MatchSetupStep, MatchSta
 use crate::schema::matches::dsl::matches;
 use self::models::{User, NewUser};
 use crate::diesel::ExpressionMethods;
-use crate::MatchState::Completed;
+use crate::MatchState::{Completed, Entered};
 use crate::schema::gslt_tokens::dsl::gslt_tokens;
 use crate::schema::gslt_tokens::in_use;
 use crate::schema::maps::dsl::maps;
@@ -73,7 +73,9 @@ pub fn get_matches<'a>(conn: &PgConnection, limit: i64, show_completed: bool) ->
 pub fn get_next_team_match<'a>(conn: &PgConnection, team_role_id: i64) -> Option<Match> {
     use crate::schema::matches::*;
     matches
-        .filter(team_one_role_id.eq(team_role_id).or(team_two_role_id.eq(team_role_id)))
+        .filter(team_one_role_id.eq(team_role_id)
+            .or(team_two_role_id.eq(team_role_id))
+            .and(match_state.eq(Entered)))
         .then_order_by(id)
         .first::<Match>(conn)
         .optional()

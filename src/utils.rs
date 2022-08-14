@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,13 +12,12 @@ use serenity::model::application::interaction::application_command::ApplicationC
 use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::application::interaction::message_component::MessageComponentInteraction;
 use serenity::model::channel::{Message, ReactionType};
-use serenity::model::guild::Guild;
 use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use urlencoding::encode;
-use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_token};
-use match_bot::models::{MatchServer, MatchSetupStep, NewMatchSetupStep, NewSeriesMap, SeriesType};
+use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_match_state, update_token};
+use match_bot::models::{MatchServer, MatchSetupStep, MatchState, NewMatchSetupStep, NewSeriesMap, SeriesType};
 use match_bot::models::SeriesType::Bo5;
 use crate::{Config, DathostConfig, DBConnectionPool, Match, Setup, SetupStep};
 use crate::dathost_models::DathostServerDuplicateResponse;
@@ -110,6 +108,7 @@ pub(crate) async fn finish_setup(context: &Context, setup_final: &Setup) {
         let conn = get_pg_conn(&context).await;
         create_match_setup_steps(&conn, match_setup_steps.clone());
         create_series_maps(&conn, series_maps.clone());
+        update_match_state(&conn, match_id, MatchState::Completed);
     }
 }
 
@@ -349,6 +348,7 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
         eprintln!("{:#?}", err);
         return Err(err);
     }
+    println!("{:#?}", start_resp.unwrap().text().await.unwrap());
     Ok(resp)
 }
 
@@ -390,39 +390,39 @@ pub async fn start_match(server_id: String, setup: &Setup, client: Client, datho
 }
 
 pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Client, dathost_config: &DathostConfig) -> Result<Response, Error> {
-    let start_match_url = String::from("https://dathost.net/api/0.1/matches");
-    let true_val = &String::from("true");
+    let start_match_url = String::from("https://dathost.net/api/0.1/match-series");
     let team_one = setup.team_one_conn_str.clone().unwrap();
     let team_one_name = setup.team_one_name.clone();
     let team_two = setup.team_two_conn_str.clone().unwrap();
     let team_two_name = setup.team_two_name.clone();
-    let mut params = HashMap::new();
+    let mut params: HashMap<&str, &str> = HashMap::new();
     let team_map = HashMap::from([
-        (setup.team_one.unwrap(), String::from("team1")),
-        (setup.team_two.unwrap(), String::from("team2"))
+        (setup.team_one.unwrap(), "team1"),
+        (setup.team_two.unwrap(),"team2")
     ]);
-    let mut num_maps = String::from("3");
-    params.insert("game_server_id", &server_id);
-    params.insert("enable_pause", true_val);
-    params.insert("enable_tech_pause", true_val);
-    params.insert("team1_name", &&team_one_name);
-    params.insert("team2_name", &&team_two_name);
-    params.insert("team1_steam_ids", &&team_one);
-    params.insert("team2_steam_ids", &&team_two);
-    params.insert("map1", &&setup.maps[0].map);
+    let mut num_maps = "3";
+    params.insert("game_server_id", &server_id.as_str());
+    params.insert("enable_pause", "true");
+    params.insert("enable_tech_pause", "true");
+    params.insert("team1_name", &&team_one_name.as_str());
+    params.insert("team2_name", &&team_two_name.as_str());
+    params.insert("team1_steam_ids", &&team_one.as_str());
+    params.insert("team2_steam_ids", &&team_two.as_str());
+    params.insert("map1", &&setup.maps[0].map.as_str());
     params.insert("map1_start_ct", team_map.get(&setup.maps[0].start_defense_team_role_id.unwrap()).unwrap());
-    params.insert("map2", &&setup.maps[1].map);
+    params.insert("map2", &&setup.maps[1].map.as_str());
     params.insert("map2_start_ct", team_map.get(&setup.maps[1].start_defense_team_role_id.unwrap()).unwrap());
-    params.insert("map3", &&setup.maps[2].map);
+    params.insert("map3", &&setup.maps[2].map.as_str());
     params.insert("map3_start_ct", team_map.get(&setup.maps[2].start_defense_team_role_id.unwrap()).unwrap());
     if setup.series_type == Bo5 {
-        num_maps = String::from("5");
-        params.insert("map4", &&setup.maps[3].map);
+        num_maps = "5";
+        params.insert("map4", &&setup.maps[3].map.as_str());
         params.insert("map4_start_ct", team_map.get(&setup.maps[3].start_defense_team_role_id.unwrap()).unwrap());
-        params.insert("map5", &&setup.maps[4].map);
+        params.insert("map5", &&setup.maps[4].map.as_str());
         params.insert("map5_start_ct", team_map.get(&setup.maps[4].start_defense_team_role_id.unwrap()).unwrap());
     }
     params.insert("number_of_maps", &num_maps);
+    println!("{:#?}", params);
     let resp = client
         .post(&start_match_url)
         .form(&params)
