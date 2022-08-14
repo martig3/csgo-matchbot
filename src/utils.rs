@@ -1,10 +1,11 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
-use reqwest::{Client, Error};
+use reqwest::{Client, Error, Response};
 use serenity::builder::{CreateActionRow, CreateButton, CreateSelectMenu, CreateSelectMenuOption};
 use serenity::model::application::component::{ButtonStyle};
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
@@ -12,6 +13,7 @@ use serenity::model::application::interaction::application_command::ApplicationC
 use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::application::interaction::message_component::MessageComponentInteraction;
 use serenity::model::channel::{Message, ReactionType};
+use serenity::model::guild::Guild;
 use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
@@ -112,7 +114,7 @@ pub(crate) async fn finish_setup(context: &Context, setup_final: &Setup) {
 }
 
 
-pub(crate) fn print_veto_info(setup_info: Vec<MatchSetupStep>, m: &Match) -> String {
+pub(crate) fn print_veto_info(setup_info: &Vec<MatchSetupStep>, m: &Match) -> String {
     if setup_info.is_empty() {
         return String::from("_This match has no veto info yet_");
     }
@@ -121,6 +123,7 @@ pub(crate) fn print_veto_info(setup_info: Vec<MatchSetupStep>, m: &Match) -> Str
         .map(|v| {
             let mut veto_str = String::new();
             let team_name = if m.team_one_role_id == v.team_role_id { &m.team_one_name } else { &m.team_two_name };
+            if v.map.is_none() { return veto_str; }
             if v.step_type == Veto {
                 veto_str.push_str(format!("- {} banned {}\n", team_name, v.map.clone().unwrap().to_lowercase()).as_str());
             } else {
@@ -281,12 +284,13 @@ pub fn create_menu_option(label: &String, value: &String) -> CreateSelectMenuOpt
     opt
 }
 
-pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setup) -> Result<String, Error> {
+pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setup) -> Result<DathostServerDuplicateResponse, Error> {
     println!("{:#?}", setup);
     let dathost_config = get_config(context).await.dathost;
     let conn = get_pg_conn(context).await;
     let client = Client::new();
-    let dupl_url = format!("https://dathost.com/api/0.1/game-servers/{}/duplicate", setup.server_id.clone().unwrap());
+    println!("duplicating server");
+    let dupl_url = format!("https://dathost.net/api/0.1/game-servers/{}/duplicate", encode(&setup.server_id.clone().unwrap()));
     let resp = client
         .post(dupl_url)
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
@@ -302,10 +306,12 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
     let server_id = resp.id.clone();
 
     let mut gslt = get_fresh_token(&conn);
+    println!("setting gslt '{}'", &gslt.token);
     let gslt_resp = client
-        .put(format!("https://dathost.com/api/0.1/game-servers/{}", server_id))
+        .put(format!("https://dathost.net/api/0.1/game-servers/{}", encode(&server_id.to_string())))
         .form(&[
-            ("csgo_settings.steam_game_server_login_token", &&gslt.token),
+            ("name", format!("match-server-{}", setup.match_id.unwrap())),
+            ("csgo_settings.steam_game_server_login_token", gslt.token.clone()),
         ])
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
@@ -315,8 +321,8 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
         gslt.in_use = true;
         update_token(&conn, gslt);
     }
-    let users: Vec<User> = context.cache.guild(guild_id).unwrap().members.iter()
-        .map(|u| u.1.user.clone())
+    let users: Vec<User> = context.http.get_guild_members(*guild_id.as_u64(), None, None).await.unwrap().iter()
+        .map(|u| u.user.clone())
         .collect();
     let mut team_one_users = Vec::new();
     let mut team_two_users = Vec::new();
@@ -328,18 +334,25 @@ pub async fn start_server(context: &Context, guild_id: GuildId, setup: &mut Setu
             team_two_users.push(u.clone());
         }
     }
+    println!("1: {:#?}", team_one_users);
+    println!("2: {:#?}", team_two_users);
     let conn = get_pg_conn(&context).await;
     setup.team_one_conn_str = Some(map_steamid_strings(team_one_users, &conn));
     setup.team_two_conn_str = Some(map_steamid_strings(team_two_users, &conn));
-    match setup.series_type {
+    println!("starting match\nteam1 '{}'\nteam2: '{}'", setup.clone().team_one_conn_str.unwrap(), setup.clone().team_two_conn_str.unwrap());
+    let start_resp = match setup.series_type {
         SeriesType::Bo1 => { start_match(server_id, setup, client, &dathost_config).await }
         SeriesType::Bo3 => { start_series_match(server_id, setup, client, &dathost_config).await }
         SeriesType::Bo5 => { start_series_match(server_id, setup, client, &dathost_config).await }
+    };
+    if let Err(err) = start_resp {
+        eprintln!("{:#?}", err);
+        return Err(err);
     }
-    Ok(resp.ip)
+    Ok(resp)
 }
 
-pub async fn start_match(server_id: String, setup: &Setup, client: Client, dathost_config: &DathostConfig) {
+pub async fn start_match(server_id: String, setup: &Setup, client: Client, dathost_config: &DathostConfig) -> Result<Response, Error> {
     let start_match_url = String::from("https://dathost.net/api/0.1/matches");
     let team_ct: String;
     let team_t: String;
@@ -357,6 +370,7 @@ pub async fn start_match(server_id: String, setup: &Setup, client: Client, datho
         team_t = setup.team_one_conn_str.clone().unwrap();
         team_t_name = setup.team_one_name.clone();
     }
+    println!("starting match request...");
     let resp = client
         .post(&start_match_url)
         .form(&[
@@ -371,12 +385,11 @@ pub async fn start_match(server_id: String, setup: &Setup, client: Client, datho
         ])
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
-        .await
-        .unwrap();
-    println!("Start match response code - {}", &resp.status());
+        .await;
+    resp
 }
 
-pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Client, dathost_config: &DathostConfig) {
+pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Client, dathost_config: &DathostConfig) -> Result<Response, Error> {
     let start_match_url = String::from("https://dathost.net/api/0.1/matches");
     let true_val = &String::from("true");
     let team_one = setup.team_one_conn_str.clone().unwrap();
@@ -415,13 +428,12 @@ pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Cl
         .form(&params)
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
-        .await
-        .unwrap();
-    println!("Start match response code - {}", &resp.status());
+        .await;
+    resp
 }
 
 pub fn map_steamid_strings(users: Vec<User>, conn: &PooledConnection<ConnectionManager<PgConnection>>) -> String {
-    let str = users.iter()
+    let mut str: String = users.iter()
         .map(|u| get_user_by_discord_id(conn, &i64::from(u.id)).steam_id)
         .map(|mut s| {
             s.replace_range(6..7, "1");
@@ -429,15 +441,15 @@ pub fn map_steamid_strings(users: Vec<User>, conn: &PooledConnection<ConnectionM
         })
         .map(|s| format!("{},", s))
         .collect();
+    str.remove(str.len() - 1);
     str
 }
 
-pub async fn create_conn_message(context: &Context, msg: &Message, url: String, setup: &Setup) {
+pub async fn create_conn_message(context: &Context, msg: &Message, server: DathostServerDuplicateResponse, setup: &Setup) {
     let client = Client::new();
-    let port_start = &url.find(':').unwrap_or(0_usize) + 1;
-    let gotv_port = String::from(&url[port_start..url.len()]).parse::<i64>().unwrap_or(0) + 1;
-    let gotv_url = format!("{}{}", &url[0..port_start], gotv_port);
-    let url_link = format!("steam://connect/{}", &url);
+    let game_url = format!("{}:{}", server.ip, server.ports.game);
+    let gotv_url = format!("{}:{}", server.ip, server.ports.gotv);
+    let url_link = format!("steam://connect/{}", &game_url);
     let gotv_link = format!("steam://connect/{}", &gotv_url);
     let resp = client
         .get(format!("https://tinyurl.com/api-create.php?url={}", encode(&url_link)))
@@ -468,7 +480,7 @@ pub async fn create_conn_message(context: &Context, msg: &Message, url: String, 
         };
     mci.create_interaction_response(&context, |r| {
         r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
-            d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &url, &gotv_url))
+            d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &game_url, &gotv_url))
         })
     })
         .await

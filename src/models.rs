@@ -50,7 +50,7 @@ pub struct Match {
     pub series_type: SeriesType,
 }
 
-#[derive(Queryable, Clone, Serialize, Deserialize)]
+#[derive(Queryable, Clone, Serialize, Deserialize, Debug)]
 pub struct MatchSetupStep {
     pub id: i32,
     pub match_id: i32,
