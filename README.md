@@ -40,6 +40,8 @@ _These are privileged admin commands:_
   DISCORD_ADMIN_ROLE_ID: <a discord server role id>
   DISCORD_APPLICATION_ID: <bot application id>
   DISCORD_GUILD_ID: <your guild id>
+  DATHOST_USER: <dathost username>
+  DATHOST_PASSWORD: <dathost password>
 ```
 
 _Note: Channel & role ids can be found by enabling discord developer mode. It is also recommended to limit your bot to
