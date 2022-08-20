@@ -471,7 +471,7 @@ pub async fn create_conn_message(context: &Context, msg: &Message, server: Datho
             )),
     ).await.unwrap();
     let mci =
-        match m.await_component_interaction(&context).timeout(Duration::from_secs(600)).await {
+        match m.await_component_interaction(&context).await {
             Some(ci) => ci,
             None => {
                 m.reply(&context, "Timed out").await.unwrap();
