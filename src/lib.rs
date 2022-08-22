@@ -62,6 +62,8 @@ pub fn get_matches<'a>(conn: &PgConnection, limit: i64, show_completed: bool) ->
     let mut query = matches::table().into_boxed();
     if show_completed {
         query = query.filter(match_state.eq(Completed));
+    } else {
+        query = query.filter(match_state.eq(Entered));
     }
     query
         .order_by(id)
