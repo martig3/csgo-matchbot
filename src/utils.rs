@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
 use reqwest::{Client, Error, Response};
 use serenity::builder::{CreateActionRow, CreateButton, CreateSelectMenu, CreateSelectMenuOption};
+use serenity::futures::StreamExt;
 use serenity::model::application::component::{ButtonStyle};
 use serenity::model::prelude::{GuildContainer, Role, RoleId, User};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
@@ -17,11 +17,11 @@ use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use urlencoding::encode;
 use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_match_state, update_token};
-use match_bot::models::{MatchServer, MatchSetupStep, MatchState, NewMatchSetupStep, NewSeriesMap, SeriesType};
+use match_bot::models::{MatchServer, MatchSetupStep, MatchState, NewMatchSetupStep, NewSeriesMap, SeriesType, StepType};
 use match_bot::models::SeriesType::Bo5;
+use match_bot::models::StepType::{Pick, Veto};
 use crate::{Config, DathostConfig, DBConnectionPool, Match, Setup, SetupStep};
 use crate::dathost_models::DathostServerDuplicateResponse;
-use crate::StepType::{Pick, Veto};
 
 pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
     let steamid_split: Vec<&str> = steamid.split(":").collect();
@@ -85,6 +85,7 @@ pub(crate) async fn get_servers(context: &Context) -> Vec<MatchServer> {
 pub(crate) async fn finish_setup(context: &Context, setup_final: &Setup) {
     let mut match_setup_steps: Vec<NewMatchSetupStep> = Vec::new();
     let match_id = setup_final.match_id.unwrap();
+    let conn = get_pg_conn(&context).await;
     for v in &setup_final.veto_pick_order {
         let step = NewMatchSetupStep {
             match_id: &match_id,
@@ -105,11 +106,10 @@ pub(crate) async fn finish_setup(context: &Context, setup_final: &Setup) {
             start_defense_team_role_id: m.start_defense_team_role_id,
         };
         series_maps.push(step);
-        let conn = get_pg_conn(&context).await;
-        create_match_setup_steps(&conn, match_setup_steps.clone());
-        create_series_maps(&conn, series_maps.clone());
-        update_match_state(&conn, match_id, MatchState::Completed);
     }
+    create_match_setup_steps(&conn, match_setup_steps.clone());
+    create_series_maps(&conn, series_maps.clone());
+    update_match_state(&conn, match_id, MatchState::Completed);
 }
 
 
@@ -246,11 +246,11 @@ pub fn create_server_conn_button_row(url: &String, gotv_url: &String) -> CreateA
     ar
 }
 
-pub fn create_map_action_row(map_list: Vec<String>) -> CreateActionRow {
+pub fn create_map_action_row(map_list: Vec<String>, step_type: &StepType) -> CreateActionRow {
     let mut ar = CreateActionRow::default();
     let mut menu = CreateSelectMenu::default();
     menu.custom_id("map_select");
-    menu.placeholder("Select map");
+    menu.placeholder(format!("Select map to {}", step_type));
     let mut options = Vec::new();
     for map_name in map_list {
         options.push(create_menu_option(&map_name, &map_name.to_ascii_lowercase()))
@@ -398,7 +398,7 @@ pub async fn start_series_match(server_id: String, setup: &mut Setup, client: Cl
     let mut params: HashMap<&str, &str> = HashMap::new();
     let team_map = HashMap::from([
         (setup.team_one.unwrap(), "team1"),
-        (setup.team_two.unwrap(),"team2")
+        (setup.team_two.unwrap(), "team2")
     ]);
     let mut num_maps = "3";
     params.insert("game_server_id", &server_id.as_str());
@@ -470,21 +470,14 @@ pub async fn create_conn_message(context: &Context, msg: &Message, server: Datho
                 create_server_conn_button_row(&t_url, &t_gotv_url)
             )),
     ).await.unwrap();
-    let mci =
-        match m.await_component_interaction(&context).await {
-            Some(ci) => ci,
-            None => {
-                m.reply(&context, "Timed out").await.unwrap();
-                return;
-            }
-        };
-    mci.create_interaction_response(&context, |r| {
-        r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
-            d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &game_url, &gotv_url))
-        })
-    })
-        .await
-        .unwrap();
+    let mut cib = m.await_component_interactions(&context).build();
+    while let Some(mci) = cib.next().await {
+        mci.create_interaction_response(&context, |r| {
+            r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
+                d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &game_url, &gotv_url))
+            })
+        }).await.unwrap();
+    }
 }
 
 pub async fn get_config(context: &Context) -> Config {

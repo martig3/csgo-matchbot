@@ -1,5 +1,6 @@
 use std::env;
 use std::str::FromStr;
+use std::time::SystemTime;
 use diesel::{PgConnection};
 
 use serde::{Deserialize, Serialize};
@@ -184,13 +185,6 @@ impl EventHandler for Handler {
                 })
                 .create_application_command(|command| {
                     command.name("matches").description("Show matches").create_option(|option| {
-                        option
-                            .name("displayid")
-                            .description("Display match IDs")
-                            .kind(CommandOptionType::Boolean)
-                            .required(false)
-                    })
-                        .create_option(|option| {
                             option
                                 .name("showcompleted")
                                 .description("Shows only completed matches")
@@ -252,7 +246,7 @@ impl EventHandler for Handler {
             ;
         }).await;
         println!("{} is connected!", ready.user.name);
-        println!("Added these guild slash commands: {:#?}", commands);
+        log::debug!("Added these guild slash commands: {:#?}", commands);
     }
     async fn interaction_create(&self, context: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(inc_command) = interaction {
@@ -279,16 +273,23 @@ impl EventHandler for Handler {
 }
 
 async fn create_int_resp(context: &Context, inc_command: &ApplicationCommandInteraction, content: String) -> serenity::Result<()> {
-    return inc_command
+    let before = SystemTime::now();
+    let resp =  inc_command
         .create_interaction_response(&context.http, |response| {
             response
                 .kind(InteractionResponseType::ChannelMessageWithSource)
-                .interaction_response_data(|message| message.content(content))
+                .interaction_response_data(|message| message.ephemeral(true).content(content))
         }).await;
+    let after = SystemTime::now();
+    let el = after.duration_since(before).unwrap().as_millis();
+    log::debug!("resp created: {}ms", el);
+    resp
+
 }
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let config = load_config().await.unwrap();
     let token = &config.discord.token;
     let framework = StandardFramework::new();

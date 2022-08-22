@@ -17,7 +17,7 @@ use match_bot::models::{Match, MatchSetupStep, MatchState, NewMatch, SeriesType}
 use crate::Setup;
 use crate::SetupMap;
 use crate::State::{MapVeto, SidePick, ServerPick};
-use crate::StepType::{Pick, Veto};
+use crate::StepType::{Pick};
 use crate::utils::{create_conn_message, find_user_team_role, no_team_resp, start_server};
 use crate::utils::admin_check;
 use crate::utils::get_maps;
@@ -123,7 +123,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                         r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
                             |d| {
                                 d.content(&init_veto_msg).components(|c|
-                                    c.add_action_row(create_map_action_row(setup.maps_remaining.clone())))
+                                    c.add_action_row(create_map_action_row(setup.maps_remaining.clone(), &setup.veto_pick_order[0].step_type)))
                             },
                         )
                     }).await.unwrap();
@@ -173,11 +173,9 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                         continue;
                     }
 
-                    let next_step_type = match setup.veto_pick_order[setup.current_step + 1].step_type {
-                        Veto => { String::from("ban") }
-                        Pick => { String::from("pick") }
-                    };
+                    let next_step_type = setup.veto_pick_order[setup.current_step + 1].step_type.clone();
                     let next_role_id = setup.veto_pick_order.get(setup.current_step + 1).unwrap().team_role_id;
+                    println!("{:#?}", map_selected);
                     let map_index = setup.maps_remaining.iter().position(|m| m == map_selected).unwrap();
                     let mut row = String::new();
                     let setup_info: Vec<MatchSetupStep> = setup.veto_pick_order.iter()
@@ -206,8 +204,8 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                     mci.create_interaction_response(&context, |r| {
                         r.kind(InteractionResponseType::UpdateMessage).interaction_response_data(
                             |d| {
-                                d.content(format!("{}\nIt is <@&{}> turn to {}", row, next_role_id, next_step_type))
-                                    .components(|c| c.add_action_row(create_map_action_row(setup.maps_remaining.clone())))
+                                d.content(format!("{}\nIt is <@&{}> turn to {}", row, next_role_id, &next_step_type.to_string()))
+                                    .components(|c| c.add_action_row(create_map_action_row(setup.maps_remaining.clone(), &next_step_type)))
                             },
                         )
                     }).await.unwrap();
@@ -343,22 +341,12 @@ pub(crate) async fn handle_matches(context: &Context, msg: &ApplicationCommandIn
     let option_one = msg.data
         .options
         .get(0);
-    let option_two = msg.data
-        .options
-        .get(1);
     let mut show_completed = false;
-    if let Some(option) = option_two {
+    if let Some(option) = option_one {
         if let Some(CommandDataOptionValue::Boolean(display)) = &option.resolved {
             show_completed = *display;
         }
     }
-    let mut show_ids = false;
-    if let Some(option) = option_one {
-        if let Some(CommandDataOptionValue::Boolean(display)) = &option.resolved {
-            show_ids = *display;
-        }
-    }
-
     let conn = get_pg_conn(&context).await;
     let matches = get_matches(&conn, 20, show_completed);
     if matches.is_empty() {
@@ -367,7 +355,7 @@ pub(crate) async fn handle_matches(context: &Context, msg: &ApplicationCommandIn
     let matches_str: String = matches.iter()
         .map(|m| {
             let mut row = String::new();
-            row.push_str(print_match_info(m, show_ids).as_str());
+            row.push_str(print_match_info(m, true).as_str());
             row
         })
         .collect();

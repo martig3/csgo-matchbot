@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use serde::Deserialize;
 use serde::Serialize;
 use std::str::FromStr;
@@ -125,6 +126,16 @@ pub enum StepType {
     Pick,
 }
 
+impl Display for StepType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            StepType::Veto => "ban",
+            StepType::Pick => "pick",
+        })
+
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsExpression, FromSqlRow, DbEnum, Serialize, Deserialize)]
 #[sql_type = "VarChar"]
 #[error_fn = "CustomError::not_found"]
@@ -160,14 +171,5 @@ impl FromStr for SeriesType {
             "bo5" => Ok(Bo5),
             _ => Err(()),
         }
-    }
-}
-
-impl ToString for StepType {
-    fn to_string(&self) -> String {
-        String::from(match &self {
-            StepType::Veto => "/ban",
-            StepType::Pick => "/pick",
-        })
     }
 }
