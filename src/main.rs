@@ -273,18 +273,12 @@ impl EventHandler for Handler {
 }
 
 async fn create_int_resp(context: &Context, inc_command: &ApplicationCommandInteraction, content: String) -> serenity::Result<()> {
-    let before = SystemTime::now();
-    let resp =  inc_command
+     inc_command
         .create_interaction_response(&context.http, |response| {
             response
                 .kind(InteractionResponseType::ChannelMessageWithSource)
                 .interaction_response_data(|message| message.ephemeral(true).content(content))
-        }).await;
-    let after = SystemTime::now();
-    let el = after.duration_since(before).unwrap().as_millis();
-    log::debug!("resp created: {}ms", el);
-    resp
-
+        }).await
 }
 
 #[tokio::main]
