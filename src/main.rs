@@ -317,14 +317,14 @@ pub fn get_connection_pool() -> Pool<ConnectionManager<PgConnection>> {
 async fn load_config() -> Result<Config, serde_yaml::Error> {
     let config: Config = Config {
         discord: DiscordConfig {
-            token: option_env!("DISCORD_TOKEN").expect("DISCORD_TOKEN not defined").to_string(),
-            admin_role_id: option_env!("DISCORD_ADMIN_ROLE_ID").expect("DISCORD_ADMIN_ROLE_ID not defined").parse().unwrap(),
-            application_id: option_env!("DISCORD_APPLICATION_ID").expect("DISCORD_APPLICATION_ID not defined").parse().unwrap(),
-            guild_id: option_env!("DISCORD_GUILD_ID").expect("DISCORD_GUILD_ID not defined").parse().unwrap(),
+            token: env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN not defined").to_string(),
+            admin_role_id: env::var("DISCORD_ADMIN_ROLE_ID").expect("DISCORD_ADMIN_ROLE_ID not defined").parse().unwrap(),
+            application_id: env::var("DISCORD_APPLICATION_ID").expect("DISCORD_APPLICATION_ID not defined").parse().unwrap(),
+            guild_id: env::var("DISCORD_GUILD_ID").expect("DISCORD_GUILD_ID not defined").parse().unwrap(),
         },
         dathost: DathostConfig {
-            user: option_env!("DATHOST_USER").expect("DATHOST_USER not defined").parse().unwrap(),
-            password: option_env!("DATHOST_PASSWORD").expect("DATHOST_PASSWORD not defined").parse().unwrap(),
+            user: env::var("DATHOST_USER").expect("DATHOST_USER not defined").parse().unwrap(),
+            password: env::var("DATHOST_PASSWORD").expect("DATHOST_PASSWORD not defined").parse().unwrap(),
         }
     };
     Ok(config)
