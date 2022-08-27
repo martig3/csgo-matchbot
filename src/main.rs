@@ -1,6 +1,5 @@
 use std::env;
 use std::str::FromStr;
-use std::time::SystemTime;
 use diesel::{PgConnection};
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +18,7 @@ use r2d2_diesel::ConnectionManager;
 use serenity::model::application::command::{CommandOptionType};
 use serenity::model::application::interaction::{Interaction, InteractionResponseType};
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
-use match_bot::models::{Match, SeriesType, StepType};
+use csgo_matchbot::models::{Match, SeriesType, StepType};
 
 mod commands;
 mod utils;

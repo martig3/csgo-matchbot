@@ -11,8 +11,8 @@ use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::prelude::interaction::application_command::CommandDataOptionValue;
 use serenity::model::prelude::{Role};
 use serenity::utils::MessageBuilder;
-use match_bot::{create_match, create_user, delete_match, get_match, get_match_setup_steps, get_matches, get_next_team_match, update_match_schedule};
-use match_bot::models::{Match, MatchSetupStep, MatchState, NewMatch, SeriesType};
+use csgo_matchbot::{create_match, create_user, delete_match, get_match, get_match_setup_steps, get_matches, get_next_team_match, update_match_schedule};
+use csgo_matchbot::models::{Match, MatchSetupStep, MatchState, NewMatch, SeriesType};
 
 use crate::Setup;
 use crate::SetupMap;

@@ -16,11 +16,11 @@ use serenity::model::id::GuildId;
 use serenity::prelude::Context;
 use serenity::utils::MessageBuilder;
 use urlencoding::encode;
-use match_bot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_match_state, update_token};
-use match_bot::models::{MatchServer, MatchSetupStep, MatchState, NewMatchSetupStep, NewSeriesMap, SeriesType, StepType};
-use match_bot::models::SeriesType::Bo5;
-use match_bot::models::StepType::{Pick, Veto};
-use crate::{Config, DathostConfig, DBConnectionPool, Match, Setup, SetupStep};
+use csgo_matchbot::{create_match_setup_steps, create_series_maps, get_fresh_token, get_map_pool, get_match_servers, get_user_by_discord_id, update_match_state, update_token};
+use csgo_matchbot::models::{Match, MatchServer, MatchSetupStep, MatchState, NewMatchSetupStep, NewSeriesMap, SeriesType, StepType};
+use csgo_matchbot::models::SeriesType::Bo5;
+use csgo_matchbot::models::StepType::{Pick, Veto};
+use crate::{Config, DathostConfig, DBConnectionPool, Setup, SetupStep};
 use crate::dathost_models::DathostServerDuplicateResponse;
 
 pub(crate) fn convert_steamid_to_64(steamid: &String) -> u64 {
