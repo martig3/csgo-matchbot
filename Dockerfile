@@ -12,7 +12,8 @@ RUN cargo build --release
 FROM rust:1.60-slim-buster
 
 # copy the build artifact from the build stage
+RUN apt update
+RUN apt-get install libpq5 -y
 COPY --from=build /csgo-matchbot/target/release/csgo-matchbot .
-
 # set the startup command to run your binary
 CMD ["./csgo-matchbot"]
