@@ -338,6 +338,7 @@ pub(crate) async fn handle_setup(context: &Context, msg: &ApplicationCommandInte
                             Ok(resp) => {
                                 finish_setup(context, &setup).await;
                                 create_conn_message(context, &new_msg, resp, &setup).await;
+                                return;
                             }
                             Err(err) => {
                                 eprintln!("{:#?}", err)
