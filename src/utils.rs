@@ -754,7 +754,8 @@ pub async fn create_conn_message(
         .unwrap();
     let t_gotv_url = resp.text_with_charset("utf-8").await.unwrap();
 
-    let mut m = msg.channel_id.send_message(&context, |m| m.content(eos_printout(setup))
+    let mut m = msg.channel_id
+        .send_message(&context, |m| m.content(eos_printout(setup))
         .components(|c|
             c.add_action_row(
                 create_server_conn_button_row(&t_url, &t_gotv_url, true)
