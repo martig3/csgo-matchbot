@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use diesel::PgConnection;
 use r2d2::{PooledConnection};
 use r2d2_diesel::ConnectionManager;
@@ -223,7 +224,7 @@ pub fn create_sidepick_action_row() -> CreateActionRow {
     ar
 }
 
-pub fn create_server_conn_button_row(url: &String, gotv_url: &String) -> CreateActionRow {
+pub fn create_server_conn_button_row(url: &String, gotv_url: &String, show_cmds: bool) -> CreateActionRow {
     let mut ar = CreateActionRow::default();
     let mut conn_button = CreateButton::default();
     conn_button.label("Connect");
@@ -231,12 +232,14 @@ pub fn create_server_conn_button_row(url: &String, gotv_url: &String) -> CreateA
     conn_button.emoji(ReactionType::Unicode("🛰".parse().unwrap()));
     conn_button.url(&url);
     ar.add_button(conn_button);
-    let mut console_button = CreateButton::default();
-    console_button.custom_id("console");
-    console_button.label("Console Cmds");
-    console_button.style(ButtonStyle::Secondary);
-    console_button.emoji(ReactionType::Unicode("🧾".parse().unwrap()));
-    ar.add_button(console_button);
+    if show_cmds {
+        let mut console_button = CreateButton::default();
+        console_button.custom_id("console");
+        console_button.label("Console Cmds");
+        console_button.style(ButtonStyle::Secondary);
+        console_button.emoji(ReactionType::Unicode("🧾".parse().unwrap()));
+        ar.add_button(console_button);
+    }
     let mut gotv_button = CreateButton::default();
     gotv_button.label("GOTV");
     gotv_button.style(ButtonStyle::Link);
@@ -464,19 +467,38 @@ pub async fn create_conn_message(context: &Context, msg: &Message, server: Datho
         .unwrap();
     let t_gotv_url = resp.text_with_charset("utf-8").await.unwrap();
 
-    let m = msg.channel_id.send_message(&context, |m| m.content(eos_printout(setup))
+    let mut m = msg.channel_id.send_message(&context, |m| m.content(eos_printout(setup))
         .components(|c|
             c.add_action_row(
-                create_server_conn_button_row(&t_url, &t_gotv_url)
+                create_server_conn_button_row(&t_url, &t_gotv_url, true)
             )),
     ).await.unwrap();
-    let mut cib = m.await_component_interactions(&context).build();
-    while let Some(mci) = cib.next().await {
-        mci.create_interaction_response(&context, |r| {
-            r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
-                d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &game_url, &gotv_url))
-            })
-        }).await.unwrap();
+    let mut cib = m
+        .await_component_interactions(&context)
+        .timeout(Duration::from_secs(60 * 5))
+        .build();
+    loop {
+        let opt = cib.next().await;
+        match opt {
+            Some(mci) => {
+                mci.create_interaction_response(&context, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource).interaction_response_data(|d| {
+                        d.ephemeral(true).content(format!("Console: ||`connect {}`||\nGOTV: ||`connect {}`||", &game_url, &gotv_url))
+                    })
+                }).await.unwrap();
+            }
+            None => {
+                // remove console cmds interaction on timeout
+                m.edit(&context, |m|
+                    m.content(eos_printout(&setup))
+                        .components(|c|
+                            c.add_action_row(create_server_conn_button_row(&t_url, &t_gotv_url, false)
+                            )
+                        ),
+                ).await.unwrap();
+                return;
+            }
+        }
     }
 }
 
