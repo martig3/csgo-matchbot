@@ -1,25 +1,20 @@
 [package]
-name = "csgo-matchbot"
-version = "0.1.4"
-authors = ["MartinWienc <32913968+MartinWienc@users.noreply.github.com>"]
+name = "matchbot"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-async-std = "1.6.3"
-chrono = { version = "0.4", features = ["serde"] }
-diesel = { version = "1.4", features = ["postgres", "chrono"] }
-diesel-enum = "0.1"
-dotenv = "0.15"
-env_logger = "0.9"
-log = "0.4"
-r2d2 = "0.8"
-r2d2-diesel = "1.0"
-rand = "0.8"
-regex = "1.6"
-reqwest = { version = "0.11", features = ["json", "blocking"] }
-serde = "1.0"
-serde_json = "1.0"
-serde_yaml = "0.9"
-serenity = { version = "0.11.2", default-features = false, features = ['builder', 'cache', 'client', 'framework', 'gateway', 'http', 'model', 'standard_framework', 'utils', 'rustls_backend', 'unstable_discord_api', 'collector'] }
-tokio = { version = "1.20", features = ["full"] }
-urlencoding = "2.1"
+anyhow = "*"
+dotenvy = "*"
+env_logger = "*"
+futures = "*"
+log = "*"
+serenity = { version = "*", default-features = false, features = ["rustls_backend", "utils", "model"] }
+paste = "*"
+poise = { version = "*", default-features = false, features = ["cache", "collector", "time"] }
+serde = { version = "*", default-features = false, features = ["derive"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "time", "tls", "pguint"] }
+tokio = { version = "*", features = ["full"] }
+
+[patch.crates-io]
+sqlx = { path = "../../sqlx/pguint" }

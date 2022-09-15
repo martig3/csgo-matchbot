@@ -1,372 +1,502 @@
-use diesel::PgConnection;
-use std::env;
-use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
-use serenity::async_trait;
-use serenity::client::Context;
-use serenity::framework::standard::StandardFramework;
-use serenity::Client;
+use anyhow::Error;
+use dotenvy::{dotenv, var};
+use poise::{Event, Framework, FrameworkOptions, samples::create_application_commands};
+use serenity::model::gateway::GatewayIntents;
+use sqlx::{PgPool, migrate::Migrator};
 
-use serenity::model::prelude::GuildId;
-use serenity::model::prelude::Ready;
-use serenity::prelude::{EventHandler, GatewayIntents, TypeMapKey};
+static MIGRATOR: Migrator = sqlx::migrate!();
 
-use csgo_matchbot::models::{Match, SeriesType, StepType};
-use r2d2::Pool;
-use r2d2_diesel::ConnectionManager;
-use serenity::model::application::command::CommandOptionType;
-use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
-use serenity::model::application::interaction::{Interaction, InteractionResponseType};
-
-mod commands;
-mod dathost_models;
-mod utils;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub discord: DiscordConfig,
-    pub dathost: DathostConfig,
+struct Data {
+    pool: PgPool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct DathostConfig {
-    pub user: String,
-    pub password: String,
-}
+type Context<'a> = poise::Context<'a, Data, Error>;
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct DiscordConfig {
-    pub token: String,
-    pub admin_role_id: u64,
-    pub application_id: u64,
-    pub guild_id: u64,
-}
+mod commands {
+    pub(crate) use admin::admin;
+    pub(crate) use team::team;
 
-#[derive(PartialEq)]
-struct StateContainer {
-    state: State,
-}
+    use super::Context;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Veto {
-    map: String,
-    vetoed_by: u64,
-}
+    pub(crate) mod admin {
+        use anyhow::Result;
+        use poise::command;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetupStep {
-    pub match_id: i32,
-    pub step_type: StepType,
-    pub team_role_id: i64,
-    pub map: Option<String>,
-}
+        use super::Context;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetupMap {
-    pub match_id: i32,
-    pub map: String,
-    pub picked_by: i64,
-    pub start_attack_team_role_id: Option<i64>,
-    pub start_defense_team_role_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Setup {
-    team_one: Option<i64>,
-    team_two: Option<i64>,
-    team_one_name: String,
-    team_two_name: String,
-    team_one_conn_str: Option<String>,
-    team_two_conn_str: Option<String>,
-    maps_remaining: Vec<String>,
-    maps: Vec<SetupMap>,
-    vetoes: Vec<Veto>,
-    series_type: SeriesType,
-    match_id: Option<i32>,
-    veto_pick_order: Vec<SetupStep>,
-    current_step: usize,
-    current_phase: State,
-    server_id: Option<String>,
-}
-
-#[derive(Debug, Copy, PartialEq, Eq, Serialize, Deserialize, Clone)]
-pub enum State {
-    MapVeto,
-    SidePick,
-    ServerPick,
-}
-
-struct Handler;
-
-struct Maps;
-
-struct Matches;
-
-struct DBConnectionPool;
-
-impl TypeMapKey for Config {
-    type Value = Config;
-}
-
-impl TypeMapKey for Maps {
-    type Value = Vec<String>;
-}
-
-impl TypeMapKey for Setup {
-    type Value = Setup;
-}
-
-impl TypeMapKey for Matches {
-    type Value = Vec<Match>;
-}
-
-impl TypeMapKey for DBConnectionPool {
-    type Value = Pool<ConnectionManager<PgConnection>>;
-}
-
-enum Command {
-    SteamId,
-    Schedule,
-    Addmatch,
-    Deletematch,
-    Match,
-    Matches,
-    Maps,
-}
-
-impl FromStr for Command {
-    type Err = ();
-    fn from_str(input: &str) -> Result<Command, Self::Err> {
-        match input {
-            "steamid" => Ok(Command::SteamId),
-            "schedule" => Ok(Command::Schedule),
-            "addmatch" => Ok(Command::Addmatch),
-            "deletematch" => Ok(Command::Deletematch),
-            "match" => Ok(Command::Match),
-            "matches" => Ok(Command::Matches),
-            "maps" => Ok(Command::Maps),
-            _ => Err(()),
+        #[command(slash_command, guild_only, ephemeral, default_member_permissions = "MODERATE_MEMBERS")]
+        pub(crate) async fn admin(context: Context<'_>) -> Result<()> {
+            context.say("Nothing to see here...").await?;
+            Ok(())
         }
     }
-}
 
-#[async_trait]
-impl EventHandler for Handler {
-    async fn ready(&self, context: Context, ready: Ready) {
-        let config = load_config().await.unwrap();
-        let guild_id = GuildId(config.discord.guild_id);
-        let commands = GuildId::set_application_commands(&guild_id, &context.http, |commands| {
-            return commands
-                .create_application_command(|command| {
-                    command
-                        .name("maps")
-                        .description("Lists the current map pool")
-                })
-                .create_application_command(|command| {
-                    command
-                        .name("steamid")
-                        .description("Set your SteamID")
-                        .create_option(|option| {
-                            option
-                                .name("steamid")
-                                .description("Your steamID, i.e. STEAM_0:1:12345678")
-                                .kind(CommandOptionType::String)
-                                .required(true)
-                        })
-                })
-                .create_application_command(|command| {
-                    command
-                        .name("match")
-                        .description("Show match info")
-                        .create_option(|option| {
-                            option
-                                .name("matchid")
-                                .description("Match ID")
-                                .kind(CommandOptionType::String)
-                                .required(true)
-                        })
-                })
-                .create_application_command(|command| {
-                    command
-                        .name("matches")
-                        .description("Show matches")
-                        .create_option(|option| {
-                            option
-                                .name("showcompleted")
-                                .description("Shows only completed matches")
-                                .kind(CommandOptionType::Boolean)
-                                .required(false)
-                        })
-                })
-                .create_application_command(|command| {
-                    command
-                        .name("deletematch")
-                        .description("Delete match (admin required)")
-                        .create_option(|option| {
-                            option
-                                .name("matchid")
-                                .description("Match ID")
-                                .kind(CommandOptionType::Integer)
-                                .required(true)
-                        })
-                })
-                .create_application_command(|command| {
-                    command.name("setup").description("Setup your next match")
-                })
-                .create_application_command(|command| {
-                    command
-                        .name("addmatch")
-                        .description("Add match to schedule (admin required)")
-                        .create_option(|option| {
-                            option
-                                .name("teamone")
-                                .description("Team 1 (Home)")
-                                .kind(CommandOptionType::Role)
-                                .required(true)
-                        })
-                        .create_option(|option| {
-                            option
-                                .name("teamtwo")
-                                .description("Team 2 (Away)")
-                                .kind(CommandOptionType::Role)
-                                .required(true)
-                        })
-                        .create_option(|option| {
-                            option
-                                .name("type")
-                                .description("Series Type")
-                                .kind(CommandOptionType::String)
-                                .required(true)
-                                .add_string_choice("Best of 1", "bo1")
-                                .add_string_choice("Best of 3", "bo3")
-                                .add_string_choice("Best of 5", "bo5")
-                        })
-                        .create_option(|option| {
-                            option
-                                .name("note")
-                                .description("Note")
-                                .kind(CommandOptionType::String)
-                                .required(false)
-                        })
-                })
-                .create_application_command(|command| {
-                    command
-                        .name("schedule")
-                        .description("Schedule your next match")
-                        .create_option(|option| {
-                            option
-                                .name("date")
-                                .description("Date (Month/Day/Year) @ Time <Timezone>")
-                                .kind(CommandOptionType::String)
-                                .required(true)
-                        })
-                });
-        })
-        .await;
-        println!("{} is connected!", ready.user.name);
-        log::debug!("Added these guild slash commands: {:#?}", commands);
-    }
-    async fn interaction_create(&self, context: Context, interaction: Interaction) {
-        if let Interaction::ApplicationCommand(inc_command) = interaction {
-            let command = inc_command.data.name.as_str().to_lowercase();
-            if let Ok(normal_command) = Command::from_str(&command) {
-                let content: String = match normal_command {
-                    Command::SteamId => commands::handle_steam_id(&context, &inc_command).await,
-                    Command::Addmatch => commands::handle_add_match(&context, &inc_command).await,
-                    Command::Deletematch => {
-                        commands::handle_delete_match(&context, &inc_command).await
-                    }
-                    Command::Schedule => commands::handle_schedule(&context, &inc_command).await,
-                    Command::Match => commands::handle_match(&context, &inc_command).await,
-                    Command::Matches => commands::handle_matches(&context, &inc_command).await,
-                    Command::Maps => commands::handle_map_list(&context).await,
-                };
-                if let Err(why) = create_int_resp(&context, &inc_command, content).await {
-                    eprintln!("Cannot respond to slash command: {}", why);
+    pub(crate) mod team {
+        use anyhow::{Error, Result};
+        use poise::command;
+        use serenity::model::{
+            application::component::ButtonStyle,
+            id::RoleId,
+            user::User,
+        };
+        use sqlx::{PgExecutor, PgPool};
+
+        use super::Context;
+
+        #[allow(unused)]
+        #[derive(Debug)]
+        pub struct Team {
+            id: i32,
+            role: u64,
+            name: String,
+            capitan: u64,
+        }
+
+        #[allow(unused)]
+        impl Team {
+            pub async fn create(executor: impl PgExecutor<'_>, role: u64, name: &str, capitan: u64) -> Result<Team> {
+                Ok(sqlx::query_as!(
+                    Team,
+                    "INSERT INTO teams
+                        (role, name, capitan)
+                    VALUES
+                        ($1, $2, $3)
+                    RETURNING *",
+                    role,
+                    name,
+                    capitan
+                ).fetch_one(executor).await?)
+            }
+
+            pub async fn delete(executor: impl PgExecutor<'_>, team: i32) -> Result<bool> {
+                let result = sqlx::query!("DELETE FROM teams WHERE id = $1", team)
+                    .execute(executor)
+                    .await?;
+
+                Ok(result.rows_affected() == 1)
+            }
+
+            pub async fn add_member(executor: impl PgExecutor<'_>, team: i32, member: u64) -> Result<bool> {
+                let result = sqlx::query!(
+                    "INSERT INTO team_members (team, member) VALUES ($1, $2)",
+                    team,
+                    member
+                ).execute(executor).await?;
+
+                Ok(result.rows_affected() == 1)
+            }
+
+            pub async fn remove_member(executor: impl PgExecutor<'_>, team: i32, member: u64) -> Result<bool> {
+                let result = sqlx::query!(
+                    "DELETE FROM team_members WHERE team = $1 AND member = $2",
+                    team,
+                    member
+                ).execute(executor).await?;
+
+                Ok(result.rows_affected() == 1)
+            }
+
+            pub async fn get_by_role(executor: impl PgExecutor<'_>, role: u64) -> Result<Option<Team>> {                
+                Ok(sqlx::query_as!(
+                    Team,
+                    "SELECT * FROM teams WHERE role = $1",
+                    role
+                ).fetch_optional(executor).await?)
+            }
+
+            pub async fn get_by_member(executor: impl PgExecutor<'_>, member: u64) -> Result<Option<Team>> {
+                Ok(sqlx::query_as!(
+                    Team,
+                    "SELECT teams.*
+                     FROM team_members
+                     JOIN teams
+                        ON team_members.team = teams.id
+                     WHERE team_members.member = $1",
+                    member
+                ).fetch_optional(executor).await?)
+            }
+
+            pub async fn members(&self, executor: impl PgExecutor<'_>) -> Result<Vec<u64>> {
+                Ok(sqlx::query_scalar!(
+                    "SELECT member FROM team_members WHERE team = $1",
+                    self.id
+                )
+                    .fetch_all(executor)
+                    .await?)
+            }
+
+            pub async fn update_capitan(executor: impl PgExecutor<'_>, team: i32, member: u64) -> Result<bool> {
+                let result = sqlx::query!(
+                    "UPDATE teams SET capitan = $1 WHERE id = $2",
+                    member,
+                    team
+                )
+                    .execute(executor)
+                    .await?;
+                Ok(result.rows_affected() == 1)
+            }
+        }
+
+        #[command(slash_command, guild_only, subcommands("create", "show", "leave", "invite", "kick"))]
+        pub(crate) async fn team(_context: Context<'_>) -> Result<()> { Ok(()) }
+
+
+        async fn create_team(pool: &PgPool, role: u64, name: impl AsRef<str>, capitan: u64) -> Result<()> {
+            let mut transaction = pool.begin().await?;
+            let team = Team::create(&mut transaction, role, name.as_ref(), capitan).await?;
+            Team::add_member(&mut transaction, team.id, capitan).await?;
+            transaction.commit().await?;
+            Ok(())
+        }
+
+        #[command(slash_command, guild_only, ephemeral)]
+        pub(crate) async fn create(context: Context<'_>, name: String) -> Result<()> {
+            let pool = &context.data().pool;
+            
+            let author = context.author().id;
+            let guild = context.guild_id().ok_or_else::<Error, _>(|| unreachable!())?;
+
+            // User does not have a team
+            if let Some(team) = Team::get_by_member(pool, author.0).await? {
+                if team.capitan == author.0 {
+                    context.say(format!("You are already the capitan of the <@&{role}> team!", role = team.role)).await?;
+                } else {
+                    context.say(format!("You are already a member of the <@&{role}> team!", role = team.role)).await?;
                 }
+                return Ok(());
             }
-            if command == "setup" {
-                commands::handle_setup(&context, &inc_command).await;
+
+            let role = guild.create_role(context.discord(), |role| {
+                role
+                    .name(name.clone())
+                    .mentionable(true)
+            }).await?.id;
+
+            if let Err(err) = create_team(pool, role.0, &name, author.0).await {
+                guild.delete_role(context.discord(), role).await?;
+                return Err(err);
             }
+
+            let mut member = guild.member(context.discord(), author).await?;
+            member.add_role(context.discord(), role).await?;
+
+            context.say(format!("Team <@&{role}> created!")).await?;
+            Ok(())
+        }
+
+        #[command(slash_command, guild_only, ephemeral)]
+        pub(crate) async fn show(context: Context<'_>, name: Option<RoleId>) -> Result<()> {
+            let pool = &context.data().pool;
+
+            let team: Team = match name {
+                Some(role) => {
+                    match Team::get_by_role(pool, role.0).await? {
+                        Some(team) => team,
+                        None => {
+                            context.say(format!("Role <@&{role}> is not associated with a team!")).await?;
+                            return Ok(());
+                        }
+                    }
+                },
+                None => {
+                    match Team::get_by_member(pool, context.author().id.0).await? {
+                        Some(team) => team,
+                        None => {
+                            context.say("You are not on a team!").await?;
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+
+            let mut members = team.members(pool).await?;
+            members.retain(|member| *member != team.capitan);
+
+            let capitan = format!("<@{capitan}>", capitan = team.capitan);
+            let members = members
+                .into_iter()
+                .map(|member| format!("<@{member}>"))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            context.say(format!("Team <@&{role}>\n\tCapitan: {capitan}\n\tMembers: {members}", role = team.role)).await?;
+            Ok(())
+        }
+
+        #[command(slash_command, guild_only, ephemeral)]
+        pub(crate) async fn leave(context: Context<'_>) -> Result<()> {
+            let pool = &context.data().pool;
+            
+            let author = context.author().id;
+            let guild = context.guild_id().ok_or_else::<Error, _>(|| unreachable!())?;
+
+            // User has team
+            let team = match Team::get_by_member(pool, author.0).await? {
+                None => {
+                    context.say("You are not on a team!").await?;
+                    return Ok(());
+                },
+                Some(team) => team,
+            };
+            let members = team.members(pool).await?;
+            
+            // User is not team capitan OR is only member
+            if author.0 == team.capitan && [author.0] != members.as_slice() {
+                context.say("A capitan cannot leave a team while it has members!").await?;
+                return Ok(());
+            }
+
+            Team::remove_member(pool, team.id, author.0).await?;
+            let mut member = guild.member(context.discord(), author.0).await?;
+            member.remove_role(context.discord(), team.role).await?;
+
+            if [author.0] == members.as_slice() {
+                Team::delete(pool, team.id).await?;
+                guild.delete_role(context.discord(), team.role).await?;
+                context.say("Team disbanded.").await?;
+            } else {
+                context.say("You left the team.").await?;
+            }
+
+            Ok(())
+        }
+
+        #[command(slash_command, guild_only, ephemeral)]
+        pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
+            let pool = &context.data().pool;
+
+            let guild = context.guild_id().ok_or_else::<Error, _>(|| unreachable!())?;
+            let author = context.author();
+
+            // Author has team
+            let team = match Team::get_by_member(pool, author.id.0).await? {
+                None => {
+                    context.say("You are not on a team!").await?;
+                    return Ok(());
+                },
+                Some(team) => team,
+            };
+
+            // Author is team capitan
+            if author.id.0 != team.capitan {
+                context.say("You are not the capitan of this team!").await?;
+                return Ok(());
+            }
+
+            // User does not have team
+            if let Some(user_team) = Team::get_by_member(pool, user.id.0).await? {
+                if team.id == user_team.id {
+                    context.say("This user is already on your team!").await?;
+                } else {
+                    context.say("This user is already on a team!").await?;
+                }
+                return Ok(());
+            }
+
+            let mut message = user.dm(context.discord(), |message| {
+                message
+                    .content(format!("You have been invited to join the <@&{}> team by <@{}>!", team.role, author.id))
+                    .components(|components| {
+                        components.create_action_row(|row| {
+                            row.create_button(|button| {
+                                button
+                                    .style(ButtonStyle::Primary)
+                                    .label("Accept")
+                                    .custom_id("accepted")
+                            })
+                            .create_button(|button| {
+                                button
+                                    .style(ButtonStyle::Danger)
+                                    .label("Decline")
+                                    .custom_id("declined")
+                            })
+                        })
+                    })
+            }).await?;
+            let reply = context.say("Invitation sent.").await?;
+
+            let interaction = message
+                .await_component_interaction(context.discord())
+                .author_id(user.id)
+                .await;
+            let response = match &interaction {
+                Some(interaction) => interaction.data.custom_id.as_str(),
+                None => {
+                    reply.edit(context, |message| {
+                        message.content("Invitation expired.")
+                    }).await?;
+                    return Ok(());
+                }
+            };
+
+            reply.edit(context, |reply|
+                reply.content(format!("{name} {response} the invitation.", name = user.name))
+            ).await?;
+            message.edit(context.discord(), |message| {
+                message
+                    .content(format!("You have {response} the invitation!"))
+                    .set_components(Default::default())
+            }).await?;
+
+            match response {
+                "accepted" => {
+                    Team::add_member(pool, team.id, user.id.0).await?;
+                    let mut member = guild.member(context.discord(), user.id).await?;
+                    member.add_role(context.discord(), team.role).await?;
+                },
+                "declined" => {},
+                _ => unreachable!(),
+            }
+
+            Ok(())
+        }
+
+        #[command(slash_command, guild_only, ephemeral)]
+        pub(crate) async fn kick(context: Context<'_>, user: User) -> Result<()> {
+            let pool = &context.data().pool;
+
+            let guild = context.guild_id().ok_or_else::<Error, _>(|| unreachable!())?;
+            let author = context.author();
+
+            // User is not Author
+            if user.id == author.id {
+                context.say("You cannot kick yourself from the team!").await?;
+                return Ok(());
+            }
+
+            // Author has team
+            let team = match Team::get_by_member(pool, author.id.0).await? {
+                None => {
+                    context.say("You are not on a team!").await?;
+                    return Ok(());
+                },
+                Some(team) => team,
+            };
+
+            // Author is team capitan
+            if author.id.0 != team.capitan {
+                context.say("You are not the capitan of this team!").await?;
+                return Ok(());
+            }
+
+            // User is on team, and it is author's team
+            if let Some(user_team) = Team::get_by_member(pool, user.id.0).await? {
+                if user_team.id != team.id {
+                    context.say(format!("<@{}> is not on your team!", user.id)).await?;
+                    return Ok(());
+                }
+            } else {
+                context.say(format!("<@{}> is not on a team!", user.id)).await?;
+                return Ok(());
+            }
+
+            Team::remove_member(pool, team.id, user.id.0).await?;
+
+            let mut member = guild.member(context.discord(), user.id).await?;
+            member.remove_role(context.discord(), team.role).await?;
+
+            context.say(format!("You kicked <@{}> from the team.", user.id)).await?;
+            Ok(())
+        }
+
+        #[command(slash_command, guild_only, ephemeral)]
+        pub(crate) async fn transfer(context: Context<'_>, user: User) -> Result<()> {
+            let pool = &context.data().pool;
+
+            let guild = context.guild_id().ok_or_else::<Error, _>(|| unreachable!())?;
+            let author = context.author();
+
+            // User is not Author
+            if user.id == author.id {
+                context.say("You cannot transfer the team to yourself!").await?;
+                return Ok(());
+            }
+
+            // Author has team
+            let team = match Team::get_by_member(pool, author.id.0).await? {
+                None => {
+                    context.say("You are not on a team!").await?;
+                    return Ok(());
+                },
+                Some(team) => team,
+            };
+
+            // Author is team capitan
+            if author.id.0 != team.capitan {
+                context.say("You are not the capitan of this team!").await?;
+                return Ok(());
+            }
+
+            // User is on team, and it is author's team
+            if let Some(user_team) = Team::get_by_member(pool, user.id.0).await? {
+                if user_team.id != team.id {
+                    context.say(format!("<@{}> is not on your team!", user.id)).await?;
+                    return Ok(());
+                }
+            } else {
+                context.say(format!("<@{}> is not on a team!", user.id)).await?;
+                return Ok(());
+            }
+
+            Team::update_capitan(pool, team.id, user.id.0).await?;
+
+            let mut member = guild.member(context.discord(), user.id).await?;
+            member.remove_role(context.discord(), team.role).await?;
+
+            context.say(format!("You have transfered the captain position to <@{}>.", user.id)).await?;
+            Ok(())
         }
     }
-}
-
-async fn create_int_resp(
-    context: &Context,
-    inc_command: &ApplicationCommandInteraction,
-    content: String,
-) -> serenity::Result<()> {
-    inc_command
-        .create_interaction_response(&context.http, |response| {
-            response
-                .kind(InteractionResponseType::ChannelMessageWithSource)
-                .interaction_response_data(|message| message.ephemeral(true).content(content))
-        })
-        .await
 }
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
-    let config = load_config().await.unwrap();
-    let token = &config.discord.token;
-    let framework = StandardFramework::new();
-    let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
-    let mut client = Client::builder(&token, intents)
-        .event_handler(Handler {})
-        .framework(framework)
-        .application_id(config.discord.application_id)
-        .await
-        .expect("Error creating client");
-    {
-        let mut data = client.data.write().await;
-        data.insert::<Config>(config);
-        data.insert::<DBConnectionPool>(get_connection_pool());
+    dotenv().ok();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .filter_module("matchbot", log::LevelFilter::Info)
+        .parse_default_env()
+        .init();
+    
+    let pool = PgPool::connect(&var("DATABASE_URL").expect("missing DATABASE_URL")).await.unwrap();
+    if let Err(error) = MIGRATOR.run(&pool).await {
+        log::error!("Migration error: {}", error);
+        std::process::exit(1);
     }
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
+
+    let framework = Framework::<_, Error>::builder()
+        .options(FrameworkOptions {
+            commands: vec![commands::admin(), commands::team()],
+            listener: move |context, event, framework, _data| Box::pin(async move {
+                if let Event::Ready { data_about_bot } = event {
+                    let commands_builder = create_application_commands(&framework.options().commands);
+                    let commands_count = commands_builder.0.len();
+                    for guild in &data_about_bot.guilds {
+                        let guild = guild.id.to_partial_guild(context).await?;
+                        
+                        let commands_builder = commands_builder.clone();
+                        guild.id.set_application_commands(context, |builder| {
+                            *builder = commands_builder;
+                            builder
+                        }).await?;
+                        
+                        log::info!("Registered {} commands for `{}`.", commands_count, guild.name);
+                    }
+                }
+                Ok(())
+            }),
+            ..Default::default()
+        })
+        .token(var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
+        .intents(GatewayIntents::empty())
+        .user_data_setup(move |_context, _ready, _framework| Box::pin(async move {
+            Ok(Data {
+                pool
+            })
+        }));
+
+    if let Err(error) = framework.run().await {
+        log::error!("Error: {}", error);
     }
-}
-
-pub fn get_connection_pool() -> Pool<ConnectionManager<PgConnection>> {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let manager = ConnectionManager::<PgConnection>::new(database_url);
-    Pool::builder()
-        .test_on_check_out(true)
-        .max_size(15)
-        .build(manager)
-        .expect("Could not build connection pool")
-}
-
-async fn load_config() -> Result<Config, serde_yaml::Error> {
-    let config: Config = Config {
-        discord: DiscordConfig {
-            token: env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN not defined"),
-            admin_role_id: env::var("DISCORD_ADMIN_ROLE_ID")
-                .expect("DISCORD_ADMIN_ROLE_ID not defined")
-                .parse()
-                .unwrap(),
-            application_id: env::var("DISCORD_APPLICATION_ID")
-                .expect("DISCORD_APPLICATION_ID not defined")
-                .parse()
-                .unwrap(),
-            guild_id: env::var("DISCORD_GUILD_ID")
-                .expect("DISCORD_GUILD_ID not defined")
-                .parse()
-                .unwrap(),
-        },
-        dathost: DathostConfig {
-            user: env::var("DATHOST_USER")
-                .expect("DATHOST_USER not defined")
-                .parse()
-                .unwrap(),
-            password: env::var("DATHOST_PASSWORD")
-                .expect("DATHOST_PASSWORD not defined")
-                .parse()
-                .unwrap(),
-        },
-    };
-    Ok(config)
 }
