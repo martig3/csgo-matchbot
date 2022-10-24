@@ -1,6 +1,6 @@
 [package]
-name = "matchbot"
-version = "0.1.0"
+name = "csgo-matchbot"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -9,12 +9,14 @@ dotenvy = "*"
 env_logger = "*"
 futures = "*"
 log = "*"
+reqwest = "0.11.11"
+urlencoding = "2.1.2"
+steamid = { git = "https://github.com/JohnPeel/steamid" }
 serenity = { version = "*", default-features = false, features = ["rustls_backend", "utils", "model"] }
 paste = "*"
-poise = { version = "*", default-features = false, features = ["cache", "collector", "time"] }
+poise = { version = "*", default-features = false, features = ["collector", "time"] }
 serde = { version = "*", default-features = false, features = ["derive"] }
-sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "time", "tls", "pguint"] }
+serde_json = "*"
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "time", "tls"] }
 tokio = { version = "*", features = ["full"] }
 
-[patch.crates-io]
-sqlx = { path = "../../sqlx/pguint" }
