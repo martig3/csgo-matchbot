@@ -61,7 +61,7 @@ pub(crate) async fn admin(_context: Context<'_>) -> Result<()> {
     guild_only,
     ephemeral,
     default_member_permissions = "MODERATE_MEMBERS",
-    subcommands("addmatch", "deletematch")
+    subcommands("add_match", "delete_match")
 )]
 pub(crate) async fn matches(_context: Context<'_>) -> Result<()> {
     Ok(())
@@ -72,14 +72,14 @@ pub(crate) async fn matches(_context: Context<'_>) -> Result<()> {
     guild_only,
     ephemeral,
     default_member_permissions = "MODERATE_MEMBERS",
-    subcommands("addserver", "deleteserver", "showservers")
+    subcommands("add_server", "delete_server", "show_servers")
 )]
 pub(crate) async fn servers(_context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
 #[command(slash_command, guild_only, ephemeral, rename = "add")]
-pub(crate) async fn addserver(
+pub(crate) async fn add_server(
     context: Context<'_>,
     location: String,
     server_id: String,
@@ -91,7 +91,7 @@ pub(crate) async fn addserver(
 }
 
 #[command(slash_command, guild_only, ephemeral, rename = "delete")]
-pub(crate) async fn deleteserver(context: Context<'_>, location: String) -> Result<()> {
+pub(crate) async fn delete_server(context: Context<'_>, location: String) -> Result<()> {
     let pool = &context.data().pool;
     ServerTemplates::delete(pool, location).await?;
     context.say("Server deleted").await?;
@@ -99,7 +99,7 @@ pub(crate) async fn deleteserver(context: Context<'_>, location: String) -> Resu
 }
 
 #[command(slash_command, guild_only, ephemeral, rename = "show")]
-pub(crate) async fn showservers(context: Context<'_>) -> Result<()> {
+pub(crate) async fn show_servers(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
     let servers = ServerTemplates::get_all(pool).await?;
     let content: String = servers
@@ -111,7 +111,7 @@ pub(crate) async fn showservers(context: Context<'_>) -> Result<()> {
 }
 
 #[command(slash_command, guild_only, ephemeral, rename = "add")]
-pub(crate) async fn addmatch(
+pub(crate) async fn add_match(
     context: Context<'_>,
     team_one: Role,
     team_two: Role,
@@ -135,7 +135,7 @@ pub(crate) async fn addmatch(
 }
 
 #[command(slash_command, guild_only, ephemeral, rename = "delete")]
-pub(crate) async fn deletematch(context: Context<'_>, match_id: i32) -> Result<()> {
+pub(crate) async fn delete_match(context: Context<'_>, match_id: i32) -> Result<()> {
     let pool = &context.data().pool;
     let result = MatchSeries::delete(pool, match_id).await;
     if let Err(_) = result {

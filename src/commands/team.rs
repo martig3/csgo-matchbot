@@ -154,6 +154,11 @@ pub(crate) async fn create(context: Context<'_>, name: String) -> Result<()> {
     let guild = context
         .guild_id()
         .ok_or_else::<Error, _>(|| unreachable!())?;
+    let steam_id = SteamUser::get_by_discord_id(pool, author.0 as i64).await?;
+    if steam_id.is_none() {
+        context.say("SteamID missing, add your steamId using `/steamid`").await?;
+        return Ok(());
+    }
 
     // User does not have a team
     if let Some(team) = Team::get_by_member(pool, author.0 as i64).await? {
@@ -286,8 +291,8 @@ pub(crate) async fn leave(context: Context<'_>) -> Result<()> {
 #[command(slash_command, guild_only, ephemeral)]
 pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
     let pool = &context.data().pool;
-    let steam_user = SteamUser::get_by_discord_id(pool, user.id.0 as i64).await;
-    if let Err(_) = steam_user {
+    let steam_user = SteamUser::get_by_discord_id(pool, user.id.0 as i64).await?;
+    if steam_user.is_none() {
         context
             .say(
                 "This user needs to add their steamId using the `/steamid` command before they can join a team",

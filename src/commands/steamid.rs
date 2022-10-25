@@ -38,13 +38,13 @@ impl SteamUser {
     pub async fn get_by_discord_id(
         executor: impl PgExecutor<'_>,
         discord_id: i64,
-    ) -> Result<SteamUser> {
+    ) -> Result<Option<SteamUser>> {
         Ok(sqlx::query_as!(
             SteamUser,
             "select * from steam_ids where discord = $1",
             discord_id
         )
-        .fetch_one(executor)
+        .fetch_optional(executor)
         .await?)
     }
     pub async fn get_by_team(executor: impl PgExecutor<'_>, team: i64) -> Result<Vec<SteamUser>> {
