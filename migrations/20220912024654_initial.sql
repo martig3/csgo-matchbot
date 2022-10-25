@@ -41,8 +41,8 @@ CREATE TYPE series_type AS ENUM ('bo1', 'bo3', 'bo5');
 CREATE TABLE match_series
 (
     id           SERIAL PRIMARY KEY,
-    team_one     int8 NOT NULL REFERENCES teams (role),
-    team_two     int8 NOT NULL REFERENCES teams (role),
+    team_one     int8        NOT NULL REFERENCES teams (role),
+    team_two     int8        NOT NULL REFERENCES teams (role),
     series_type  series_type NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL,
     completed_at TIMESTAMPTZ
@@ -55,6 +55,7 @@ create table servers
 (
     id           serial primary key,
     match_series integer not null references match_series (id),
+    server_id    text    not null,
     hostname     text    not null,
     game_port    integer not null,
     gotv_port    integer not null
@@ -75,9 +76,9 @@ CREATE TABLE match
     id            SERIAL PRIMARY KEY,
     match_series  INTEGER NOT NULL REFERENCES match_series (id),
     map           INTEGER NOT NULL REFERENCES maps (id),
-    picked_by     int8 NOT NULL REFERENCES teams (id),
-    start_ct_team int8 NOT NULL REFERENCES teams (id),
-    start_t_team  int8 NOT NULL REFERENCES teams (id),
+    picked_by     int8    NOT NULL REFERENCES teams (id),
+    start_ct_team int8    NOT NULL REFERENCES teams (id),
+    start_t_team  int8    NOT NULL REFERENCES teams (id),
     completed_at  timestamptz
 );
 CREATE INDEX ON match (match_series);

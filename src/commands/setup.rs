@@ -11,14 +11,18 @@ use serenity::model::application::interaction::message_component::MessageCompone
 use serenity::model::channel::ReactionType;
 use std::collections::HashMap;
 use std::env;
+use std::env::VarError;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::model::prelude::interaction::InteractionResponseType;
 
+use crate::commands::admin::ServerTemplates;
 use crate::commands::maps::Map;
 use crate::commands::matches::VoteType::{Pick, Veto};
-use crate::commands::matches::{Match, MatchSeries, NewMatch, SeriesType, VoteInfo, VoteType};
+use crate::commands::matches::{
+    Match, MatchSeries, NewMatch, SeriesType, Server, VoteInfo, VoteType,
+};
 use crate::commands::steamid::SteamUser;
 use crate::commands::team::Team;
 use sqlx::FromRow;
@@ -53,7 +57,7 @@ pub struct Ports {
 pub struct NewVoteInfo {
     pub match_series: i32,
     pub map: Option<i32>,
-    pub step_type: VoteType,
+    pub vote_type: VoteType,
     pub team: i64,
 }
 
@@ -116,59 +120,42 @@ impl Setup {
     }
 }
 
-#[derive(Debug, FromRow, Clone)]
-pub struct ServerTemplates {
-    location: String,
-    server_id: String,
-}
-
-impl ServerTemplates {
-    async fn get_all(executor: impl PgExecutor<'_>) -> Result<Vec<ServerTemplates>> {
-        Ok(sqlx::query_as!(
-            ServerTemplates,
-            "select * from server_templates order by location"
-        )
-        .fetch_all(executor)
-        .await?)
-    }
-}
-
 async fn bo1_setup(match_series: i32, team_one: i64, team_two: i64) -> (Vec<NewVoteInfo>, String) {
     (
         vec![
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_one,
                 map: None,
             },
@@ -185,37 +172,37 @@ async fn bo3_setup(match_series: i32, team_one: i64, team_two: i64) -> (Vec<NewV
         vec![
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_one,
                 map: None,
             },
@@ -232,43 +219,43 @@ async fn bo5_setup(match_series: i32, team_one: i64, team_two: i64) -> (Vec<NewV
         vec![
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Veto,
+                vote_type: Veto,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_one,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_two,
                 map: None,
             },
             NewVoteInfo {
                 match_series,
-                step_type: Pick,
+                vote_type: Pick,
                 team: team_one,
                 map: None,
             },
@@ -384,7 +371,9 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
             SetupState::MapVeto => {
                 map_veto_phase(pool, &context, &mci, &mut setup, &maps, &current_match).await?
             }
-            SetupState::SidePick => side_pick_phase(pool, &context, &mci, &mut setup).await?,
+            SetupState::SidePick => {
+                side_pick_phase(pool, &context, &mci, &mut setup, &maps).await?
+            }
             SetupState::ServerPick => {
                 server_pick_phase(pool, &context, &mci, &mut setup, &series_setup.1).await?
             }
@@ -427,9 +416,9 @@ async fn server_pick_phase(
                 .unwrap();
                 return Ok(false);
             }
-            let choice_id = mci.data.values.get(1).unwrap();
             let choice_loc = mci.data.values.get(0).unwrap();
-            if setup.servers_remaining.len() != 1 {
+            println!("{:#?}", setup.servers_remaining);
+            if setup.servers_remaining.len() != 2 {
                 let pos_remove = setup
                     .servers_remaining
                     .iter()
@@ -455,13 +444,17 @@ async fn server_pick_phase(
                     "<@&{}> {} `{}`, <@&{}> turn to {} a server",
                     setup.server_veto_team, previous_step, choice_loc, next_team, current_step
                 );
-                mci.edit_original_interaction_response(&context.discord(), |d| {
-                    d.content(content).components(|c| {
-                        c.add_action_row(create_server_action_row(
-                            setup.servers_remaining.clone(),
-                            &current_step,
-                        ))
-                    })
+                setup.server_veto_team = next_team;
+                mci.create_interaction_response(&context.discord(), |r| {
+                    r.kind(InteractionResponseType::UpdateMessage)
+                        .interaction_response_data(|d| {
+                            d.content(content).components(|c| {
+                                c.add_action_row(create_server_action_row(
+                                    setup.servers_remaining.clone(),
+                                    &current_step,
+                                ))
+                            })
+                        })
                 })
                 .await
                 .unwrap();
@@ -471,25 +464,28 @@ async fn server_pick_phase(
             let server_id = &setup
                 .servers_remaining
                 .iter()
-                .find(|s| &s.server_id == choice_id)
+                .find(|s| &s.location == choice_loc)
                 .unwrap()
                 .server_id;
             setup.server_id = Some(server_id.clone());
+            setup.current_phase = SetupState::MapVeto;
             let content = format!(
                 "<@&{}> picked `{}`, server pick phase completed.\n{}",
                 setup.server_veto_team, choice_loc, init_veto_msg
             );
-            mci.edit_original_interaction_response(&context.discord(), |d| {
-                d.content(content).components(|c| {
-                    c.add_action_row(create_map_action_row(
-                        setup.maps_remaining.clone(),
-                        &setup.veto_pick_order[0].step_type,
-                    ))
-                })
+            mci.create_interaction_response(&context.discord(), |r| {
+                r.kind(InteractionResponseType::UpdateMessage)
+                    .interaction_response_data(|d| {
+                        d.content(content).components(|c| {
+                            c.add_action_row(create_map_action_row(
+                                setup.maps_remaining.clone(),
+                                &setup.veto_pick_order[0].vote_type,
+                            ))
+                        })
+                    })
             })
             .await
             .unwrap();
-            setup.current_phase = SetupState::MapVeto;
             return Ok(false);
         }
         no_team_resp(context, &mci).await;
@@ -503,6 +499,7 @@ async fn side_pick_phase(
     context: &Context<'_>,
     mci: &Arc<MessageComponentInteraction>,
     setup: &mut Setup,
+    maps: &Vec<Map>,
 ) -> Result<bool> {
     let option_selected = mci.data.values.get(0).unwrap();
     if let Ok(team) = Team::get_by_member(pool, mci.user.id.0 as i64).await {
@@ -537,12 +534,13 @@ async fn side_pick_phase(
                     setup.team_one
                 };
                 let next_map = &setup.maps_sel.get(setup.current_step + 1).unwrap().map;
+                let next_map_name = &maps.iter().find(|m| &m.id == next_map).unwrap().name;
                 mci.create_interaction_response(&context.discord(), |r| {
                     r.kind(InteractionResponseType::UpdateMessage)
                         .interaction_response_data(|d| {
                             d.content(format!(
-                                "It is <@&{}> turn to pick starting side on {}",
-                                next_team, next_map
+                                "It is <@&{}> turn to pick starting side on `{}`",
+                                next_team, next_map_name
                             ))
                             .components(|c| c.add_action_row(create_sidepick_action_row()))
                         })
@@ -701,7 +699,7 @@ async fn map_veto_phase(
             }
 
             let selected_map_id = maps.iter().find(|m| &m.name == map_selected).unwrap().id;
-            if setup.veto_pick_order[setup.current_step].step_type == Pick {
+            if setup.veto_pick_order[setup.current_step].vote_type == Pick {
                 setup.maps_sel.push(NewMatch {
                     map: selected_map_id,
                     picked_by: curr_step_info.team,
@@ -717,21 +715,25 @@ async fn map_veto_phase(
                 } else {
                     setup.team_one
                 };
-                mci.edit_original_interaction_response(&context.discord(), |d| {
-                    d.content(format!(
-                        "Map veto completed.\nIt is <@&{}> turn to pick starting side for `{}`",
-                        other_role_id, first_map.map
-                    ))
-                    .components(|c| c.add_action_row(create_sidepick_action_row()))
+                let next_map_name = &maps.iter().find(|m| m.id == first_map.map).unwrap().name;
+                mci.create_interaction_response(&context.discord(), |r| {
+                    r.kind(InteractionResponseType::UpdateMessage)
+                        .interaction_response_data(|d| {
+                            d.content(format!(
+                                "Map veto completed.\nIt is <@&{}> turn to pick starting side for `{}`",
+                                other_role_id, next_map_name
+                            ))
+                                .components(|c| c.add_action_row(create_sidepick_action_row()))
+                        })
                 })
-                .await
-                .unwrap();
+                    .await
+                    .unwrap();
                 setup.current_step = 0;
                 setup.current_phase = SetupState::SidePick;
                 return Ok(false);
             }
 
-            let next_step_type = setup.veto_pick_order[setup.current_step + 1].step_type;
+            let next_vote_type = setup.veto_pick_order[setup.current_step + 1].vote_type;
             let next_role_id = setup
                 .veto_pick_order
                 .get(setup.current_step + 1)
@@ -742,6 +744,7 @@ async fn map_veto_phase(
                 .iter()
                 .position(|m| m == map_selected)
                 .unwrap();
+            setup.veto_pick_order[setup.current_step].map = Some(selected_map_id);
             let curr_vote_info: Vec<VoteInfo> = setup
                 .veto_pick_order
                 .clone()
@@ -749,32 +752,37 @@ async fn map_veto_phase(
                 .map(|v| VoteInfo {
                     id: 0,
                     match_series: curr_series.id,
-                    map: v.map.unwrap(),
-                    step_type: v.step_type,
+                    map: if v.map.is_some() { v.map.unwrap() } else { -1 },
+                    vote_type: v.vote_type,
                     team: v.team,
                 })
                 .collect();
             setup.maps_remaining.remove(map_index);
             let info_str = curr_series.info_string(pool, Some(curr_vote_info)).await?;
-            mci.edit_original_interaction_response(&context.discord(), |d| {
-                d.content(format!(
-                    "{}\nIt is <@&{}> turn to {}",
-                    info_str,
-                    next_role_id,
-                    &next_step_type.to_string()
-                ))
-                .components(|c| {
-                    c.add_action_row(create_map_action_row(
-                        setup.maps_remaining.clone(),
-                        &next_step_type,
-                    ))
-                })
+            mci.create_interaction_response(&context.discord(), |r| {
+                r.kind(InteractionResponseType::UpdateMessage)
+                    .interaction_response_data(|d| {
+                        d.content(format!(
+                            "{}\nIt is <@&{}> turn to {}",
+                            info_str,
+                            next_role_id,
+                            &next_vote_type.to_string()
+                        ))
+                        .components(|c| {
+                            c.add_action_row(create_map_action_row(
+                                setup.maps_remaining.clone(),
+                                &next_vote_type,
+                            ))
+                        })
+                    })
             })
             .await
             .unwrap();
             setup.current_step += 1;
+            return Ok(false);
         }
         no_team_resp(context, &mci).await;
+        return Ok(false);
     }
     no_team_resp(context, &mci).await;
     Ok(false)
@@ -799,11 +807,14 @@ pub(crate) async fn eos_str(pool: &PgPool, setup: &Setup) -> Result<String> {
     Ok(resp)
 }
 
-pub fn create_map_action_row(map_list: Vec<String>, step_type: &VoteType) -> CreateActionRow {
+pub fn create_map_action_row(map_list: Vec<String>, vote_type: &VoteType) -> CreateActionRow {
     let mut ar = CreateActionRow::default();
     let mut menu = CreateSelectMenu::default();
     menu.custom_id("map_select");
-    menu.placeholder(format!("Select map to {}", step_type));
+    menu.placeholder(format!(
+        "Select map to {}",
+        vote_type.to_string().to_lowercase()
+    ));
     let mut options = Vec::new();
     for map_name in map_list {
         options.push(create_menu_option(
@@ -818,18 +829,18 @@ pub fn create_map_action_row(map_list: Vec<String>, step_type: &VoteType) -> Cre
 
 pub fn create_server_action_row(
     server_list: Vec<ServerTemplates>,
-    step_type: &VoteType,
+    vote_type: &VoteType,
 ) -> CreateActionRow {
     let mut ar = CreateActionRow::default();
     let mut menu = CreateSelectMenu::default();
     menu.custom_id("server_select");
-    menu.placeholder(format!("Select server to {}", step_type));
+    menu.placeholder(format!(
+        "Select server to {}",
+        vote_type.to_string().to_lowercase()
+    ));
     let mut options = Vec::new();
     for server in server_list {
-        options.push(create_menu_option(
-            &server.location,
-            &server.server_id.to_string(),
-        ))
+        options.push(create_menu_option(&server.location, &server.location))
     }
     menu.options(|f| f.set_options(options));
     ar.add_select_menu(menu);
@@ -877,10 +888,12 @@ pub async fn start_server(
     setup: &mut Setup,
 ) -> Result<DathostServerDuplicateResponse, Error> {
     println!("{:#?}", setup);
-    mci.edit_original_interaction_response(&context.discord(), {
-        |d| {
-            d.content("Match setup completed, starting server **[#---]** _Duplicating server template..._")
-        }
+    mci.create_interaction_response(&context.discord(), |r| {
+        r.kind(InteractionResponseType::UpdateMessage)
+            .interaction_response_data(|d| {
+                d.content("Match setup completed, starting server **[#---]** _Duplicating server template..._")
+                    .components(|c| c)
+            })
     })
         .await?;
     let dathost_config = DathostConfig {
@@ -893,7 +906,7 @@ pub async fn start_server(
         "https://dathost.net/api/0.1/game-servers/{}/duplicate",
         encode(&setup.server_id.clone().unwrap())
     );
-    let resp = client
+    let dupl_resp = client
         .post(dupl_url)
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
@@ -901,15 +914,20 @@ pub async fn start_server(
         .json::<DathostServerDuplicateResponse>()
         .await?;
 
-    mci.edit_original_interaction_response(&context.discord(), {
-        |d| d.content("Match setup completed, starting server **[##--]** _Setting GSLT token..._")
+    mci.create_interaction_response(&context.discord(), |r| {
+        r.kind(InteractionResponseType::UpdateMessage)
+            .interaction_response_data(|d| {
+                d.content(
+                    "Match setup completed, starting server **[##--]** _Setting GSLT token..._",
+                )
+            })
     })
     .await?;
 
-    let server_id = resp.id.clone();
-    setup.server_hostname = resp.game.clone();
-    setup.server_game_port = Some(resp.ports.game.clone());
-    setup.server_gotv_port = Some(resp.ports.gotv.clone());
+    let server_id = dupl_resp.id.clone();
+    setup.server_hostname = dupl_resp.game.clone();
+    setup.server_game_port = Some(dupl_resp.ports.game.clone());
+    setup.server_gotv_port = Some(dupl_resp.ports.gotv.clone());
     let gslt = create_gslt(&server_id, setup.match_series.unwrap()).await?;
     println!("setting gslt '{}'", &gslt);
     client
@@ -928,10 +946,13 @@ pub async fn start_server(
         .send()
         .await?;
 
-    mci.edit_original_interaction_response(&context.discord(), {
-        |d| {
-            d.content("Match setup completed, starting server **[###-]** _Start server from match config..._")
-        }
+    mci.create_interaction_response(&context.discord(), |r| {
+        r.kind(InteractionResponseType::UpdateMessage)
+            .interaction_response_data(|d| {
+                {
+                    d.content("Match setup completed, starting server **[###-]** _Start server from match config..._")
+                }
+            })
     }).await?;
 
     setup.team_one_conn_str = Some(team_conn_str(setup.team_one, pool).await?);
@@ -941,22 +962,74 @@ pub async fn start_server(
         setup.clone().team_one_conn_str.unwrap(),
         setup.clone().team_two_conn_str.unwrap()
     );
+    let match_end_webhook_url = match env::var("MATCH_END_WEBHOOK_URL") {
+        Ok(url) => url,
+        Err(_) => String::new(),
+    };
+    let round_end_webhook_url = match env::var("ROUND_END_WEBHOOK_URL") {
+        Ok(url) => url,
+        Err(_) => String::new(),
+    };
     let start_resp = match setup.series_type {
-        Bo1 => start_match(server_id, setup, client, &dathost_config, pool).await,
-        Bo3 => start_series_match(server_id, setup, client, &dathost_config, pool).await,
-        Bo5 => start_series_match(server_id, setup, client, &dathost_config, pool).await,
+        Bo1 => {
+            start_match(
+                server_id,
+                setup,
+                client,
+                &dathost_config,
+                pool,
+                match_end_webhook_url,
+                round_end_webhook_url,
+            )
+            .await
+        }
+        Bo3 => {
+            start_series_match(
+                server_id,
+                setup,
+                client,
+                &dathost_config,
+                pool,
+                match_end_webhook_url,
+                round_end_webhook_url,
+            )
+            .await
+        }
+        Bo5 => {
+            start_series_match(
+                server_id,
+                setup,
+                client,
+                &dathost_config,
+                pool,
+                match_end_webhook_url,
+                round_end_webhook_url,
+            )
+            .await
+        }
     };
     if let Err(err) = start_resp {
         eprintln!("{:#?}", err);
         return Err(Error::from(err));
     }
-
-    println!("{:#?}", start_resp.unwrap().text().await.unwrap());
-    mci.edit_original_interaction_response(&context.discord(), {
-        |d| d.content("Match setup completed, server started **[####]**")
+    Server::add(
+        pool,
+        setup.match_series.unwrap(),
+        &dupl_resp.id,
+        &dupl_resp.ip,
+        dupl_resp.ports.game as i32,
+        dupl_resp.ports.gotv as i32,
+    )
+    .await?;
+    log::info!("{:#?}", start_resp.unwrap().text().await.unwrap());
+    mci.create_interaction_response(&context.discord(), |r| {
+        r.kind(InteractionResponseType::UpdateMessage)
+            .interaction_response_data(|d| {
+                d.content("Match setup completed, server started **[####]**")
+            })
     })
     .await?;
-    Ok(resp)
+    Ok(dupl_resp)
 }
 
 async fn create_gslt(server_id: &String, match_id: i32) -> Result<String> {
@@ -984,6 +1057,8 @@ pub async fn start_match(
     client: Client,
     dathost_config: &DathostConfig,
     pool: &PgPool,
+    match_end_webhook_url: String,
+    round_end_webhook_url: String,
 ) -> std::result::Result<Response, reqwest::Error> {
     let start_match_url = String::from("https://dathost.net/api/0.1/matches");
     let team_ct: String;
@@ -1003,6 +1078,7 @@ pub async fn start_match(
         team_t_name = setup.team_one_name.clone();
     }
     let map = Map::get(pool, new_match.map).await.unwrap();
+
     println!("starting match request...");
     client
         .post(&start_match_url)
@@ -1015,6 +1091,8 @@ pub async fn start_match(
             ("team2_steam_ids", &&team_ct),
             ("enable_pause", &&String::from("true")),
             ("enable_tech_pause", &&String::from("true")),
+            ("match_end_webhook_url", &&match_end_webhook_url),
+            ("round_end_webhook_url", &&round_end_webhook_url),
         ])
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
         .send()
@@ -1027,6 +1105,8 @@ pub async fn start_series_match(
     client: Client,
     dathost_config: &DathostConfig,
     pool: &PgPool,
+    match_end_webhook_url: String,
+    round_end_webhook_url: String,
 ) -> std::result::Result<Response, reqwest::Error> {
     let start_match_url = String::from("https://dathost.net/api/0.1/match-series");
     let team_one = setup.team_one_conn_str.clone().unwrap();

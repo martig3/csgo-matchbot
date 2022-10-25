@@ -38,12 +38,35 @@ pub struct NewMatch {
 pub struct Server {
     pub id: i32,
     pub match_series: i32,
+    pub server_id: String,
     pub hostname: String,
     pub game_port: i32,
     pub gotv_port: i32,
 }
 
 impl Server {
+    pub async fn add(
+        executor: impl PgExecutor<'_>,
+        match_series: i32,
+        server_id: &String,
+        hostname: &String,
+        game_port: i32,
+        gotv_port: i32,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            "insert into servers (match_series, server_id, hostname, game_port, gotv_port)\
+            values ($1, $2, $3, $4, $5)",
+            match_series,
+            server_id,
+            hostname,
+            game_port,
+            gotv_port,
+        )
+        .execute(executor)
+        .await?;
+        let rows_affected = result.rows_affected() == 1;
+        Ok(rows_affected)
+    }
     async fn get_live(executor: impl PgExecutor<'_>) -> Result<Vec<Server>> {
         Ok(sqlx::query_as!(
             Server,
@@ -81,7 +104,7 @@ pub struct VoteInfo {
     pub id: i32,
     pub match_series: i32,
     pub map: i32,
-    pub step_type: VoteType,
+    pub vote_type: VoteType,
     pub team: i64,
 }
 
@@ -168,7 +191,7 @@ impl VoteInfo {
         )
         .bind(new.match_series)
         .bind(new.map)
-        .bind(new.step_type)
+        .bind(new.vote_type)
         .bind(new.team)
         .fetch_all(executor)
         .await?)
@@ -295,15 +318,16 @@ impl MatchSeries {
         let mut info_string = String::from("```diff\n");
         let rows: String = vote_info
             .into_iter()
+            .filter(|v| v.map > 0)
             .map(|v| {
                 let mut row_str = String::new();
-                let team_name = if self.team_one == team_one.role {
+                let team_name = if v.team == team_one.role {
                     &team_one.name
                 } else {
                     &team_two.name
                 };
                 let map_name = &maps.iter().find(|m| m.id == v.map).unwrap().name;
-                if v.step_type == Veto {
+                if v.vote_type == Veto {
                     row_str.push_str(format!("- {} banned {}\n", team_name, map_name,).as_str());
                 } else {
                     row_str.push_str(format!("+ {} picked {}\n", team_name, map_name,).as_str());
