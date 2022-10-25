@@ -26,7 +26,7 @@ use crate::commands::matches::{
 use crate::commands::steamid::SteamUser;
 use crate::commands::team::Team;
 
-use sqlx::{PgPool};
+use sqlx::PgPool;
 use steamid::{SteamId, Universe};
 use urlencoding::encode;
 
@@ -298,7 +298,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
                 current_match.team_one,
                 current_match.team_two,
             )
-                .await
+            .await
         }
         Bo3 => {
             bo3_setup(
@@ -306,7 +306,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
                 current_match.team_one,
                 current_match.team_two,
             )
-                .await
+            .await
         }
         Bo5 => {
             bo5_setup(
@@ -314,7 +314,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
                 current_match.team_one,
                 current_match.team_two,
             )
-                .await
+            .await
         }
     };
     let team_one_name = Team::get_by_role(pool, current_match.team_one)
@@ -327,7 +327,9 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         .name;
     let servers_remaining = ServerTemplates::get_all(pool).await?;
     if servers_remaining.len() == 0 {
-        context.say("No server templates have been added, use `/admin servers add` to add some.").await?;
+        context
+            .say("No server templates have been added, use `/admin servers add` to add some.")
+            .await?;
         return Ok(());
     }
     let mut setup: Setup = Setup {
@@ -358,28 +360,28 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
                 "\nIt is <@&{}> turn to ban a server",
                 setup.team_two
             ))
-                .components(|c| {
-                    c.add_action_row(create_server_action_row(
-                        setup.servers_remaining.clone(),
-                        &Veto,
-                    ))
-                })
+            .components(|c| {
+                c.add_action_row(create_server_action_row(
+                    setup.servers_remaining.clone(),
+                    &Veto,
+                ))
+            })
         })
-            .await?;
+        .await?;
     } else {
         m.edit(context, |d| {
             d.content(format!(
                 "\nIt is <@&{}> turn to pick a server",
                 setup.team_two
             ))
-                .components(|c| {
-                    c.add_action_row(create_server_action_row(
-                        setup.servers_remaining.clone(),
-                        &Pick,
-                    ))
-                })
+            .components(|c| {
+                c.add_action_row(create_server_action_row(
+                    setup.servers_remaining.clone(),
+                    &Pick,
+                ))
+            })
         })
-            .await?;
+        .await?;
     }
     let mut cib = m
         .message()
@@ -437,8 +439,8 @@ async fn server_pick_phase(
                                 .content("It is not your team's turn to pick or ban a server")
                         })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
                 return Ok(false);
             }
             let choice_loc = mci.data.values.get(0).unwrap();
@@ -481,8 +483,8 @@ async fn server_pick_phase(
                             })
                         })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
                 return Ok(false);
             }
 
@@ -509,8 +511,8 @@ async fn server_pick_phase(
                         })
                     })
             })
-                .await
-                .unwrap();
+            .await
+            .unwrap();
         }
         None => {
             no_team_resp(context, &mci).await;
@@ -548,8 +550,8 @@ async fn side_pick_phase(
                                 .content("It is not your team's turn to pick sides")
                         })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
                 return Ok(false);
             }
             if setup.maps_sel.len() != setup.current_step + 1 {
@@ -572,11 +574,11 @@ async fn side_pick_phase(
                                 "It is <@&{}> turn to pick starting side on `{}`",
                                 next_team, next_map_name
                             ))
-                                .components(|c| c.add_action_row(create_sidepick_action_row()))
+                            .components(|c| c.add_action_row(create_sidepick_action_row()))
                         })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
             }
             if option_selected == &String::from("ct") {
                 setup.maps_sel[setup.current_step].start_ct_team = Some(not_picked_by);
@@ -655,8 +657,8 @@ pub async fn send_conn_msg(
                             ))
                         })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
             }
             None => {
                 // remove console cmds interaction on timeout
@@ -666,8 +668,8 @@ pub async fn send_conn_msg(
                         c.add_action_row(create_server_conn_button_row(&t_url, &t_gotv_url, false))
                     })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
                 break;
             }
         }
@@ -728,8 +730,8 @@ async fn map_veto_phase(
                                 .content("It is not your team's turn to pick or ban")
                         })
                 })
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
                 return Ok(false);
             }
 
@@ -803,16 +805,16 @@ async fn map_veto_phase(
                             next_role_id,
                             &next_vote_type.to_string()
                         ))
-                            .components(|c| {
-                                c.add_action_row(create_map_action_row(
-                                    setup.maps_remaining.clone(),
-                                    &next_vote_type,
-                                ))
-                            })
+                        .components(|c| {
+                            c.add_action_row(create_map_action_row(
+                                setup.maps_remaining.clone(),
+                                &next_vote_type,
+                            ))
+                        })
                     })
             })
-                .await
-                .unwrap();
+            .await
+            .unwrap();
             setup.current_step += 1;
             return Ok(false);
         }
@@ -834,7 +836,7 @@ pub(crate) async fn eos_str(pool: &PgPool, setup: &Setup) -> Result<String> {
                 maps.iter().find(|m| m.id == el.map).unwrap().name,
                 &el.picked_by,
             )
-                .as_str(),
+            .as_str(),
         )
     }
     Ok(resp)
@@ -910,8 +912,8 @@ async fn no_team_resp(context: &Context<'_>, mci: &Arc<MessageComponentInteracti
                     .content("You are not part of either team currently setting up a match")
             })
     })
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 }
 
 pub async fn start_server(
@@ -963,7 +965,7 @@ pub async fn start_server(
                 )
             })
     })
-        .await?;
+    .await?;
 
     let server_id = dupl_resp.id.clone();
     setup.server_hostname = dupl_resp.game.clone();
@@ -1022,7 +1024,7 @@ pub async fn start_server(
                 match_end_webhook_url,
                 round_end_webhook_url,
             )
-                .await
+            .await
         }
         Bo3 => {
             start_series_match(
@@ -1034,7 +1036,7 @@ pub async fn start_server(
                 match_end_webhook_url,
                 round_end_webhook_url,
             )
-                .await
+            .await
         }
         Bo5 => {
             start_series_match(
@@ -1046,7 +1048,7 @@ pub async fn start_server(
                 match_end_webhook_url,
                 round_end_webhook_url,
             )
-                .await
+            .await
         }
     };
     if let Err(err) = start_resp {
@@ -1061,7 +1063,7 @@ pub async fn start_server(
         dupl_resp.ports.game as i32,
         dupl_resp.ports.gotv as i32,
     )
-        .await?;
+    .await?;
     log::info!("{:#?}", start_resp.unwrap().text().await.unwrap());
     mci.create_interaction_response(&context.discord(), |r| {
         r.kind(InteractionResponseType::UpdateMessage)
@@ -1069,7 +1071,7 @@ pub async fn start_server(
                 d.content("Match setup completed, server started **[####]**")
             })
     })
-        .await?;
+    .await?;
     Ok(dupl_resp)
 }
 

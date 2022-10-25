@@ -156,7 +156,9 @@ pub(crate) async fn create(context: Context<'_>, name: String) -> Result<()> {
         .ok_or_else::<Error, _>(|| unreachable!())?;
     let steam_id = SteamUser::get_by_discord_id(pool, author.0 as i64).await?;
     if steam_id.is_none() {
-        context.say("SteamID missing, add your steamId using `/steamid`").await?;
+        context
+            .say("SteamID missing, add your steamId using `/steamid`")
+            .await?;
         return Ok(());
     }
 
