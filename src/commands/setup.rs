@@ -11,7 +11,7 @@ use serenity::model::application::interaction::message_component::MessageCompone
 use serenity::model::channel::ReactionType;
 use std::collections::HashMap;
 use std::env;
-use std::env::VarError;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,8 +25,8 @@ use crate::commands::matches::{
 };
 use crate::commands::steamid::SteamUser;
 use crate::commands::team::Team;
-use sqlx::FromRow;
-use sqlx::{PgExecutor, PgPool};
+
+use sqlx::{PgPool};
 use steamid::{SteamId, Universe};
 use urlencoding::encode;
 
@@ -934,7 +934,15 @@ pub async fn start_server(
         password: env::var("DATHOST_PASSWORD").unwrap(),
     };
     let client = Client::new();
-    // TODO: add cache update!
+    let sync_url = format!(
+        "https://dathost.net/api/0.1/game-servers/{server_id}/sync-files",
+        server_id = encode(&setup.server_id.clone().unwrap())
+    );
+    client
+        .post(sync_url)
+        .basic_auth(&dathost_config.user, Some(&dathost_config.password))
+        .send()
+        .await?;
     let dupl_url = format!(
         "https://dathost.net/api/0.1/game-servers/{}/duplicate",
         encode(&setup.server_id.clone().unwrap())
