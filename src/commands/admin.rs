@@ -3,6 +3,7 @@ use crate::commands::matches::{MatchSeries, SeriesType};
 use anyhow::Result;
 use poise::command;
 
+use crate::commands::team::Team;
 use serenity::model::guild::Role;
 use sqlx::sqlx_macros::FromRow;
 use sqlx::PgExecutor;
@@ -119,10 +120,12 @@ pub(crate) async fn add_match(
 ) -> Result<()> {
     let pool = &context.data().pool;
     let series_type_enum = SeriesType::from_str(&series_type).unwrap();
+    let team_one = Team::get_by_role(pool, team_one.id.0 as i64).await?;
+    let team_two = Team::get_by_role(pool, team_two.id.0 as i64).await?;
     let result = MatchSeries::create(
         pool,
-        team_one.id.0 as i64,
-        team_two.id.0 as i64,
+        team_one.unwrap().id,
+        team_two.unwrap().id,
         series_type_enum,
     );
     if let Err(err) = result.await {

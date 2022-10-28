@@ -1,7 +1,6 @@
 use crate::commands::maps::Map;
 use crate::commands::matches::SeriesType::{Bo1, Bo3, Bo5};
 use crate::commands::matches::VoteType::Veto;
-use crate::commands::setup::NewVoteInfo;
 use crate::commands::team::Team;
 use crate::Context;
 use anyhow::Result;
@@ -10,27 +9,27 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::time::OffsetDateTime;
 use sqlx::{FromRow, Type};
 use sqlx::{PgExecutor, PgPool};
-use std::fmt;
 use std::str::FromStr;
+use std::{fmt, i32};
 
 #[allow(unused)]
 #[derive(Debug, FromRow)]
 pub struct Match {
-    id: i32,
-    match_series: i32,
-    map: i32,
-    picked_by: i32,
-    start_ct_team: i32,
-    start_t_team: i32,
-    completed_at: Option<OffsetDateTime>,
+    pub id: i32,
+    pub match_series: i32,
+    pub map: i32,
+    pub picked_by: i32,
+    pub start_ct_team: i32,
+    pub start_t_team: i32,
+    pub completed_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Clone)]
 pub struct NewMatch {
-    pub(crate) map: i32,
-    pub(crate) picked_by: i64,
-    pub(crate) start_ct_team: Option<i64>,
-    pub(crate) start_t_team: Option<i64>,
+    pub map_id: i32,
+    pub picked_by_role: i64,
+    pub start_ct_team_role: Option<i64>,
+    pub start_t_team_role: Option<i64>,
 }
 
 #[allow(unused)]
@@ -92,8 +91,8 @@ impl Server {
 #[derive(Debug, FromRow)]
 pub struct MatchSeries {
     pub id: i32,
-    pub team_one: i64,
-    pub team_two: i64,
+    pub team_one: i32,
+    pub team_two: i32,
     pub series_type: SeriesType,
     pub created_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
@@ -104,8 +103,9 @@ pub struct VoteInfo {
     pub id: i32,
     pub match_series: i32,
     pub map: i32,
+    #[sqlx(rename = "type")]
     pub vote_type: VoteType,
-    pub team: i64,
+    pub team: i32,
 }
 
 #[derive(
@@ -161,19 +161,55 @@ impl fmt::Display for VoteType {
 
 #[derive(FromRow)]
 #[allow(unused)]
-struct MatchScore {
+pub struct MatchScore {
     pub id: i32,
     pub match_id: i32,
     pub team_one_score: i32,
     pub team_two_score: i32,
 }
 
+impl MatchScore {}
+
 impl MatchScore {
+    pub async fn add(executor: impl PgExecutor<'_>, match_series: i32) -> Result<bool> {
+        let result = sqlx::query!(
+            "
+            insert into match_scores (match_id)
+                    VALUES
+                        ($1)
+                    ",
+            match_series,
+        )
+        .execute(executor)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+    async fn get_by_series(
+        executor: impl PgExecutor<'_>,
+        match_series: i32,
+    ) -> Result<Vec<MatchScore>> {
+        Ok(sqlx::query_as!(
+            MatchScore,
+            "select ms.*
+                 from match_scores ms
+                    join match m on ms.match_id = m.id
+                    join match_series mts on m.match_series = mts.id
+                where mts.id = $1 ",
+            match_series,
+        )
+        .fetch_all(executor)
+        .await?)
+    }
     async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchScore>> {
-        Ok(sqlx::query_as(
-            "select * from match_scores
-                    where in_progress = true
-                 order by id",
+        Ok(sqlx::query_as!(
+            MatchScore,
+            "select ms.*
+                 from match_scores ms
+                    join match m on ms.match_id = m.id
+                    join match_series mts on m.match_series = mts.id
+                 where m.completed_at is null
+                     and mts.completed_at is null
+                 order by ms.id",
         )
         .fetch_all(executor)
         .await?)
@@ -181,7 +217,13 @@ impl MatchScore {
 }
 
 impl VoteInfo {
-    pub async fn add(executor: impl PgExecutor<'_>, new: &NewVoteInfo) -> Result<Vec<VoteInfo>> {
+    pub async fn add(
+        executor: impl PgExecutor<'_>,
+        match_series: i32,
+        map: i32,
+        vote_type: VoteType,
+        team: i32,
+    ) -> Result<VoteInfo> {
         Ok(sqlx::query_as(
             "
             insert into vote_info (match_series, map, type, team)
@@ -189,11 +231,11 @@ impl VoteInfo {
                         ($1, $2, $3, $4)
                     RETURNING *",
         )
-        .bind(new.match_series)
-        .bind(new.map)
-        .bind(new.vote_type)
-        .bind(new.team)
-        .fetch_all(executor)
+        .bind(match_series)
+        .bind(map)
+        .bind(vote_type)
+        .bind(team)
+        .fetch_one(executor)
         .await?)
     }
     async fn get_by_match_series(
@@ -212,8 +254,8 @@ impl VoteInfo {
 impl MatchSeries {
     pub async fn create(
         executor: impl PgExecutor<'_>,
-        team_one: i64,
-        team_two: i64,
+        team_one: i32,
+        team_two: i32,
         series_type: SeriesType,
     ) -> Result<MatchSeries> {
         Ok(sqlx::query_as(
@@ -254,10 +296,11 @@ impl MatchSeries {
             "
                 select ms.*
                 from match_series ms
-                    join teams t on t.role = ms.team_one or t.role = ms.team_two
+                    join teams t on t.id = ms.team_one or t.id = ms.team_two
                     join team_members tm on t.id = tm.team
                     join steam_ids si on si.discord = tm.member
                 where si.discord = $1
+                    and ms.completed_at is null
                 order by ms.id",
         )
         .bind(user)
@@ -321,7 +364,7 @@ impl MatchSeries {
             .filter(|v| v.map > 0)
             .map(|v| {
                 let mut row_str = String::new();
-                let team_name = if v.team == team_one.role {
+                let team_name = if v.team == team_one.id {
                     &team_one.name
                 } else {
                     &team_two.name
@@ -345,7 +388,10 @@ impl Match {
     pub async fn create(
         executor: impl PgExecutor<'_>,
         match_series: i32,
-        new: &NewMatch,
+        map: i32,
+        picked_by: i32,
+        start_ct_team: i32,
+        start_t_team: i32,
     ) -> Result<Match> {
         Ok(sqlx::query_as(
             "INSERT INTO match 
@@ -355,20 +401,24 @@ impl Match {
                     RETURNING *",
         )
         .bind(match_series)
-        .bind(new.map)
-        .bind(new.picked_by)
-        .bind(new.start_ct_team)
-        .bind(new.start_t_team)
+        .bind(map)
+        .bind(picked_by)
+        .bind(start_ct_team)
+        .bind(start_t_team)
         .fetch_one(executor)
         .await?)
     }
 
     async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchSeries>> {
         Ok(sqlx::query_as(
-            "select m.*
-                 from match m
-                   inner join match_scores mi on m.id = mi.match_id
-                 where mi.in_progress is true",
+            "select ms.*
+                 from match_series ms
+                   join match m on m.match_series = ms.id
+                   join match_scores mi on m.id = mi.match_id
+                   join servers s on s.match_series = s.id
+                 where ms.completed_at is null
+                   and m.completed_at is null
+                 ",
         )
         .fetch_all(executor)
         .await?)
@@ -401,8 +451,8 @@ pub(crate) async fn scheduled(context: Context<'_>, all: bool) -> Result<()> {
         .into_iter()
         .map(|m| {
             let mut s = String::new();
-            let team_one_name = &teams.iter().find(|t| t.role == m.team_one).unwrap().name;
-            let team_two_name = &teams.iter().find(|t| t.role == m.team_two).unwrap().name;
+            let team_one_name = &teams.iter().find(|t| t.id == m.team_one).unwrap().name;
+            let team_two_name = &teams.iter().find(|t| t.id == m.team_two).unwrap().name;
             s.push_str(format!("`id: {}` ", m.id).as_str());
             s.push_str(format!("{}", &team_one_name).as_str());
             s.push_str(" vs ");
@@ -425,6 +475,11 @@ pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
         return Ok(());
     }
     let servers = Server::get_live(pool).await?;
+    let mut teams = Vec::new();
+    for m in &matches {
+        teams.push(Team::get(pool, m.team_one).await?);
+        teams.push(Team::get(pool, m.team_two).await?);
+    }
     let match_info: String = matches
         .into_iter()
         .map(|m| {
@@ -432,11 +487,13 @@ pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
             let m_info = info.iter().find(|i| i.match_id == m.id).unwrap();
             let team_one_score = m_info.team_one_score;
             let team_two_score = m_info.team_two_score;
+            let team_one_role = teams.iter().find(|t| t.id == m.team_one).unwrap().role;
+            let team_two_role = teams.iter().find(|t| t.id == m.team_two).unwrap().role;
             let server = servers.iter().find(|s| s.match_series == m.id).unwrap();
             s.push_str(format!("`#{}` ", m.id).as_str());
-            s.push_str(format!("<@&{}> `**{}**`", &m.team_one, team_one_score).as_str());
+            s.push_str(format!("<@&{}> **`{}`**", &team_one_role, team_one_score).as_str());
             s.push_str(" - ");
-            s.push_str(format!("`**{}**` <@&{}>", team_two_score, m.team_two).as_str());
+            s.push_str(format!("**`{}`** <@&{}>", team_two_score, team_two_role).as_str());
             s.push_str("\n - ");
             s.push_str(
                 format!(
@@ -465,20 +522,37 @@ pub(crate) async fn completed(context: Context<'_>, all: bool) -> Result<()> {
         return Ok(());
     }
     let teams = Team::get_all(pool).await?;
-    let match_info: String = matches
-        .into_iter()
-        .map(|m| {
-            let mut s = String::new();
-            let team_one_name = &teams.iter().find(|t| t.role == m.team_one).unwrap().name;
-            let team_two_name = &teams.iter().find(|t| t.role == m.team_one).unwrap().name;
-            s.push_str(format!("`id: {}` ", m.id).as_str());
-            s.push_str(format!("{}", &team_one_name).as_str());
-            s.push_str(" vs ");
-            s.push_str(format!("{}", &team_two_name).as_str());
-            s.push_str("\n");
-            s
-        })
-        .collect();
-    context.say(match_info).await?;
+    let mut s = String::new();
+    for m in matches {
+        let scores = MatchScore::get_by_series(pool, m.id).await?;
+        let team_one_score = match m.series_type {
+            Bo1 => scores[0].team_one_score,
+            _ => scores.iter().fold(0, |a, s| {
+                if s.team_one_score > s.team_two_score {
+                    a + 1
+                } else {
+                    a
+                }
+            }),
+        };
+        let team_two_score = match m.series_type {
+            Bo1 => scores[0].team_one_score,
+            _ => scores.iter().fold(0, |a, s| {
+                if s.team_one_score < s.team_two_score {
+                    a + 1
+                } else {
+                    a
+                }
+            }),
+        };
+        let team_one_name = &teams.iter().find(|t| t.id == m.team_one).unwrap().name;
+        let team_two_name = &teams.iter().find(|t| t.id == m.team_two).unwrap().name;
+        s.push_str(format!("`#{}` ", m.id).as_str());
+        s.push_str(format!("{} **`{}`**", &team_one_name, team_one_score).as_str());
+        s.push_str(" - ");
+        s.push_str(format!("**`{}`** {}", team_two_score, &team_two_name).as_str());
+        s.push_str("\n");
+    }
+    context.say(s).await?;
     Ok(())
 }

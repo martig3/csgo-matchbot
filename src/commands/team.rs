@@ -3,10 +3,10 @@ use crate::commands::steamid::SteamUser;
 use anyhow::{Error, Result};
 use poise::command;
 use serenity::model::{application::component::ButtonStyle, id::RoleId, user::User};
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{FromRow, PgExecutor, PgPool};
 
 #[allow(unused)]
-#[derive(Debug)]
+#[derive(Debug, Clone, FromRow)]
 pub struct Team {
     pub id: i32,
     pub role: i64,
@@ -37,9 +37,9 @@ impl Team {
         .await?)
     }
 
-    pub async fn get(executor: impl PgExecutor<'_>, role: i64) -> Result<Team> {
+    pub async fn get(executor: impl PgExecutor<'_>, id: i32) -> Result<Team> {
         Ok(
-            sqlx::query_as!(Team, "SELECT * FROM TEAMS where role = $1", role,)
+            sqlx::query_as!(Team, "SELECT * FROM TEAMS where id = $1", id)
                 .fetch_one(executor)
                 .await?,
         )

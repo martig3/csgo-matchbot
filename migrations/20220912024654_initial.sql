@@ -41,8 +41,8 @@ CREATE TYPE series_type AS ENUM ('bo1', 'bo3', 'bo5');
 CREATE TABLE match_series
 (
     id           SERIAL PRIMARY KEY,
-    team_one     int8        NOT NULL REFERENCES teams (role),
-    team_two     int8        NOT NULL REFERENCES teams (role),
+    team_one     integer     NOT NULL REFERENCES teams (id),
+    team_two     integer     NOT NULL REFERENCES teams (id),
     series_type  series_type NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL,
     completed_at TIMESTAMPTZ
@@ -76,9 +76,9 @@ CREATE TABLE match
     id            SERIAL PRIMARY KEY,
     match_series  INTEGER NOT NULL REFERENCES match_series (id),
     map           INTEGER NOT NULL REFERENCES maps (id),
-    picked_by     int8    NOT NULL REFERENCES teams (id),
-    start_ct_team int8    NOT NULL REFERENCES teams (id),
-    start_t_team  int8    NOT NULL REFERENCES teams (id),
+    picked_by     INTEGER NOT NULL REFERENCES teams (id),
+    start_ct_team INTEGER NOT NULL REFERENCES teams (id),
+    start_t_team  INTEGER NOT NULL REFERENCES teams (id),
     completed_at  timestamptz
 );
 CREATE INDEX ON match (match_series);
@@ -87,8 +87,8 @@ CREATE TABLE match_scores
 (
     id             SERIAL PRIMARY KEY,
     match_id       INTEGER NOT NULL REFERENCES match (id),
-    team_one_score INTEGER DEFAULT 0,
-    team_two_score INTEGER DEFAULT 0
+    team_one_score INTEGER NOT NULL DEFAULT 0,
+    team_two_score INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE notes

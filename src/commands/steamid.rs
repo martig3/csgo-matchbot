@@ -1,5 +1,6 @@
 use crate::Data;
 use anyhow::{Error, Result};
+use log::error;
 use poise::Modal;
 use poise::{command, ApplicationContext};
 use sqlx::{FromRow, PgExecutor};
@@ -77,7 +78,7 @@ impl SteamUser {
 #[command(slash_command, guild_only)]
 pub(crate) async fn steamid(context: ApplicationContext<'_, Data, Error>) -> Result<()> {
     let data: SteamIDModal = SteamIDModal::execute(context).await?;
-    let steamid_str = data.steamid;
+    let steamid_str = data.steamid.trim();
     let steamid64 = SteamId::parse(steamid_str);
     if let Ok(steamid64) = steamid64 {
         SteamUser::add(
@@ -96,6 +97,8 @@ pub(crate) async fn steamid(context: ApplicationContext<'_, Data, Error>) -> Res
                                 \nPlease verify this is the account you will be playing on, otherwise you will not be able to join a match server!",
                                      steamid64.community_link())))
             .await?;
+    } else {
+        error!("Error parsing '{}'", steamid_str)
     }
     Ok(())
 }
