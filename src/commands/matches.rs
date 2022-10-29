@@ -11,7 +11,7 @@ use sqlx::{FromRow, Type};
 use sqlx::{PgExecutor, PgPool};
 use std::str::FromStr;
 use std::{fmt, i32};
-use strum::{EnumIter};
+use strum::EnumIter;
 
 #[allow(unused)]
 #[derive(Debug, FromRow)]
@@ -471,8 +471,11 @@ pub(crate) async fn scheduled(context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral,
-description_localized("en-US", "Show all matches in progress & GOTV info")
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Show all matches in progress & GOTV info")
 )]
 pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;

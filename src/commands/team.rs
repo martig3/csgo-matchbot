@@ -152,9 +152,14 @@ pub(crate) async fn team(_context: Context<'_>) -> Result<()> {
     ephemeral,
     description_localized("en-US", "Create a new team")
 )]
-pub(crate) async fn create(context: Context<'_>, #[description = "Team name"] name: String) -> Result<()> {
+pub(crate) async fn create(
+    context: Context<'_>,
+    #[description = "Team name"] name: String,
+) -> Result<()> {
     if name.len() > 30 {
-        context.say("Team name must be under 30 characters long").await?;
+        context
+            .say("Team name must be under 30 characters long")
+            .await?;
     }
     let pool = &context.data().pool;
 
