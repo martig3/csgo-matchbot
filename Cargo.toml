@@ -17,7 +17,7 @@ paste = "*"
 poise = { version = "*", default-features = false, features = ["collector", "time"] }
 serde = { version = "*", default-features = false, features = ["derive"] }
 serde_json = "*"
-sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "time", "tls"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "time", "tls", "offline"] }
 tokio = { version = "*", features = ["full"] }
 strum = { version = "0.24", features = ["derive"] }
 strum_macros = "*"
