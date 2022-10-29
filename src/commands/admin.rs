@@ -1,13 +1,15 @@
 use super::super::Context;
 use crate::commands::matches::{MatchSeries, SeriesType};
 use anyhow::Result;
+use futures::{Stream, StreamExt};
 use poise::command;
+use std::str::FromStr;
 
 use crate::commands::team::Team;
 use serenity::model::guild::Role;
 use sqlx::sqlx_macros::FromRow;
 use sqlx::PgExecutor;
-use std::str::FromStr;
+use strum::IntoEnumIterator;
 
 #[derive(Debug, FromRow, Clone)]
 pub struct ServerTemplates {
@@ -46,6 +48,14 @@ impl ServerTemplates {
     }
 }
 
+async fn series_types<'a>(_ctx: Context<'_>, partial: &'a str) -> impl Stream<Item = String> + 'a {
+    let s_types: Vec<SeriesType> = SeriesType::iter().collect::<Vec<_>>();
+    let type_strings: Vec<String> = s_types.into_iter().map(|t| t.to_string()).collect();
+    futures::stream::iter(type_strings)
+        .filter(move |name| futures::future::ready(name.starts_with(partial)))
+        .map(|name| name.to_string())
+}
+
 #[command(
     slash_command,
     guild_only,
@@ -79,11 +89,17 @@ pub(crate) async fn servers(_context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral, rename = "add")]
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "add",
+    description_localized("en-US", "Add server template")
+)]
 pub(crate) async fn add_server(
     context: Context<'_>,
-    location: String,
-    server_id: String,
+    #[description = "Location name"] location: String,
+    #[description = "Dathost server id"] server_id: String,
 ) -> Result<()> {
     let pool = &context.data().pool;
     ServerTemplates::add(pool, location, server_id).await?;
@@ -91,15 +107,30 @@ pub(crate) async fn add_server(
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral, rename = "delete")]
-pub(crate) async fn delete_server(context: Context<'_>, location: String) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "delete",
+    description_localized("en-US", "Delete server template")
+)]
+pub(crate) async fn delete_server(
+    context: Context<'_>,
+    #[description = "Location name"] location: String,
+) -> Result<()> {
     let pool = &context.data().pool;
     ServerTemplates::delete(pool, location).await?;
     context.say("Server deleted").await?;
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral, rename = "show")]
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "show",
+    description_localized("en-US", "Show all server templates")
+)]
 pub(crate) async fn show_servers(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
     let servers = ServerTemplates::get_all(pool).await?;
@@ -111,12 +142,18 @@ pub(crate) async fn show_servers(context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral, rename = "add")]
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "add",
+    description_localized("en-US", "Add match to schedule")
+)]
 pub(crate) async fn add_match(
     context: Context<'_>,
-    team_one: Role,
-    team_two: Role,
-    series_type: String,
+    #[description = "Team One (Higher Seed)"] team_one: Role,
+    #[description = "Team One (Lower Seed)"] team_two: Role,
+    #[autocomplete = "series_types"] series_type: String,
 ) -> Result<()> {
     let pool = &context.data().pool;
     let series_type_enum = SeriesType::from_str(&series_type).unwrap();
@@ -137,8 +174,17 @@ pub(crate) async fn add_match(
     return Ok(());
 }
 
-#[command(slash_command, guild_only, ephemeral, rename = "delete")]
-pub(crate) async fn delete_match(context: Context<'_>, match_id: i32) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "delete",
+    description_localized("en-US", "Delete match from schedule")
+)]
+pub(crate) async fn delete_match(
+    context: Context<'_>,
+    #[description = "Match Id"] match_id: i32,
+) -> Result<()> {
     let pool = &context.data().pool;
     let result = MatchSeries::delete(pool, match_id).await;
     if let Err(_) = result {

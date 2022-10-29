@@ -75,7 +75,11 @@ impl SteamUser {
     }
 }
 
-#[command(slash_command, guild_only)]
+#[command(
+    slash_command,
+    guild_only,
+    description_localized("en-US", "Set your SteamID")
+)]
 pub(crate) async fn steamid(context: ApplicationContext<'_, Data, Error>) -> Result<()> {
     let data: SteamIDModal = SteamIDModal::execute(context).await?;
     let steamid_str = data.steamid.trim();

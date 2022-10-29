@@ -11,6 +11,7 @@ use sqlx::{FromRow, Type};
 use sqlx::{PgExecutor, PgPool};
 use std::str::FromStr;
 use std::{fmt, i32};
+use strum::{EnumIter};
 
 #[allow(unused)]
 #[derive(Debug, FromRow)]
@@ -76,15 +77,6 @@ impl Server {
         .fetch_all(executor)
         .await?)
     }
-    async fn get_by_series(executor: impl PgExecutor<'_>, match_series: i32) -> Result<Server> {
-        Ok(sqlx::query_as!(
-            Server,
-            "select * from servers where match_series = $1",
-            match_series
-        )
-        .fetch_one(executor)
-        .await?)
-    }
 }
 
 #[allow(unused)]
@@ -109,7 +101,7 @@ pub struct VoteInfo {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, Type,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, Type, EnumIter,
 )]
 #[sqlx(rename_all = "lowercase", type_name = "series_type")]
 pub enum SeriesType {
@@ -153,8 +145,8 @@ pub enum VoteType {
 impl fmt::Display for VoteType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Veto => write!(f, "Veto"),
-            Pick => write!(f, "Pick"),
+            VoteType::Veto => write!(f, "Veto"),
+            VoteType::Pick => write!(f, "Pick"),
         }
     }
 }
@@ -167,8 +159,6 @@ pub struct MatchScore {
     pub team_one_score: i32,
     pub team_two_score: i32,
 }
-
-impl MatchScore {}
 
 impl MatchScore {
     pub async fn add(executor: impl PgExecutor<'_>, match_series: i32) -> Result<bool> {
@@ -409,6 +399,21 @@ impl Match {
         .await?)
     }
 
+    pub(crate) async fn get_by_series(
+        executor: impl PgExecutor<'_>,
+        match_series: i32,
+    ) -> Result<Vec<Match>> {
+        Ok(sqlx::query_as!(
+            Match,
+            "select m.* from match_series ms \
+                join match m on m.match_series = ms.id \
+                where match_series = $1 \
+                ",
+            match_series
+        )
+        .fetch_all(executor)
+        .await?)
+    }
     async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchSeries>> {
         Ok(sqlx::query_as(
             "select ms.*
@@ -434,14 +439,15 @@ pub(crate) async fn matches(_context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
-pub(crate) async fn scheduled(context: Context<'_>, all: bool) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Show your scheduled matches")
+)]
+pub(crate) async fn scheduled(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
-    let matches = if all {
-        MatchSeries::get_all(pool, 20, false).await?
-    } else {
-        MatchSeries::get_all_by_user(pool, 20, context.author().id.0, false).await?
-    };
+    let matches = MatchSeries::get_all_by_user(pool, 20, context.author().id.0, false).await?;
     if matches.is_empty() {
         context.say("No matches were found").await?;
         return Ok(());
@@ -465,7 +471,9 @@ pub(crate) async fn scheduled(context: Context<'_>, all: bool) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
+#[command(slash_command, guild_only, ephemeral,
+description_localized("en-US", "Show all matches in progress & GOTV info")
+)]
 pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
     let info = MatchScore::get_in_progress(pool).await?;
@@ -509,14 +517,15 @@ pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
-pub(crate) async fn completed(context: Context<'_>, all: bool) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Show completed matches")
+)]
+pub(crate) async fn completed(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
-    let matches = if all {
-        MatchSeries::get_all(pool, 20, true).await?
-    } else {
-        MatchSeries::get_all_by_user(pool, 20, context.author().id.0, true).await?
-    };
+    let matches = MatchSeries::get_all(pool, 20, true).await?;
     if matches.is_empty() {
         context.say("No matches were found").await?;
         return Ok(());

@@ -129,6 +129,14 @@ impl Team {
     }
 }
 
+async fn create_team(pool: &PgPool, role: u64, name: impl AsRef<str>, capitan: u64) -> Result<()> {
+    let mut transaction = pool.begin().await?;
+    let team = Team::create(&mut transaction, role as i64, name.as_ref(), capitan as i64).await?;
+    Team::add_member(&mut transaction, team.id, capitan as i64).await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
 #[command(
     slash_command,
     guild_only,
@@ -138,16 +146,16 @@ pub(crate) async fn team(_context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn create_team(pool: &PgPool, role: u64, name: impl AsRef<str>, capitan: u64) -> Result<()> {
-    let mut transaction = pool.begin().await?;
-    let team = Team::create(&mut transaction, role as i64, name.as_ref(), capitan as i64).await?;
-    Team::add_member(&mut transaction, team.id, capitan as i64).await?;
-    transaction.commit().await?;
-    Ok(())
-}
-
-#[command(slash_command, guild_only, ephemeral)]
-pub(crate) async fn create(context: Context<'_>, name: String) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Create a new team")
+)]
+pub(crate) async fn create(context: Context<'_>, #[description = "Team name"] name: String) -> Result<()> {
+    if name.len() > 30 {
+        context.say("Team name must be under 30 characters long").await?;
+    }
     let pool = &context.data().pool;
 
     let author = context.author().id;
@@ -201,8 +209,16 @@ pub(crate) async fn create(context: Context<'_>, name: String) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
-pub(crate) async fn show(context: Context<'_>, name: Option<RoleId>) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Show a team's roster")
+)]
+pub(crate) async fn show(
+    context: Context<'_>,
+    #[description = "Team role"] name: Option<RoleId>,
+) -> Result<()> {
     let pool = &context.data().pool;
 
     let team: Team = match name {
@@ -243,7 +259,12 @@ pub(crate) async fn show(context: Context<'_>, name: Option<RoleId>) -> Result<(
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Leave your team")
+)]
 pub(crate) async fn leave(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
 
@@ -290,7 +311,12 @@ pub(crate) async fn leave(context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Invite a user to your team")
+)]
 pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
     let pool = &context.data().pool;
     let steam_user = SteamUser::get_by_discord_id(pool, user.id.0 as i64).await?;
@@ -402,7 +428,12 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Kick a player from your team")
+)]
 pub(crate) async fn kick(context: Context<'_>, user: User) -> Result<()> {
     let pool = &context.data().pool;
 
@@ -462,8 +493,16 @@ pub(crate) async fn kick(context: Context<'_>, user: User) -> Result<()> {
     Ok(())
 }
 
-#[command(slash_command, guild_only, ephemeral)]
-pub(crate) async fn transfer(context: Context<'_>, user: User) -> Result<()> {
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Transfer the captain role to another player")
+)]
+pub(crate) async fn transfer(
+    context: Context<'_>,
+    #[description = "User to assign captain"] user: User,
+) -> Result<()> {
     let pool = &context.data().pool;
 
     let guild = context

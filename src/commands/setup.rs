@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serenity::builder::{CreateActionRow, CreateButton, CreateSelectMenu, CreateSelectMenuOption};
 use serenity::model::application::component::ButtonStyle;
 use serenity::model::application::interaction::message_component::MessageComponentInteraction;
-use serenity::model::channel::ReactionType;
+use serenity::model::channel::{ChannelType, ReactionType};
 use std::collections::HashMap;
 use std::env;
 
@@ -301,7 +301,11 @@ async fn bo5_setup(match_series: i32, team_one: i64, team_two: i64) -> (Vec<NewV
     )
 }
 
-#[command(slash_command, guild_only)]
+#[command(
+    slash_command,
+    guild_only,
+    description_localized("en-US", "Setup your next scheduled match")
+)]
 pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
     let current_match = MatchSeries::next_user_match(pool, context.author().id.0 as i64).await;
@@ -312,6 +316,13 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         return Ok(());
     }
     let current_match = current_match.unwrap();
+    let is_series_setup = Match::get_by_series(pool, current_match.id).await;
+    if is_series_setup.is_ok() && !is_series_setup.unwrap().is_empty() {
+        context
+            .say("Your next match is already setup and in progress.")
+            .await?;
+        return Ok(());
+    }
     let maps = Map::get_all(pool, true).await?;
     let maps_names: Vec<String> = maps
         .clone()
@@ -358,9 +369,26 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         team_one_conn_str: None,
         server_gotv_port: None,
     };
-    let m = context.say("Starting setup...").await?;
+    let m = context
+        .say(format!(
+            "Starting setup for <@&{}> vs <@&{}> ⤵️",
+            setup.team_one.role, setup.team_two.role
+        ))
+        .await?;
+    let thread = context
+        .channel_id()
+        .create_public_thread(context.discord(), m.message().await?.id, |t| {
+            t.kind(ChannelType::PublicThread);
+            t.name(format!(
+                "Match Setup - {} vs {} ",
+                setup.team_one.name, setup.team_two.name
+            ));
+            t
+        })
+        .await?;
+    let mut m = thread.say(context.discord(), "Starting setup...").await?;
     if setup.servers_remaining.len() > 1 {
-        m.edit(context, |d| {
+        m.edit(context.discord(), |d| {
             d.content(format!(
                 "\nIt is <@&{}> turn to ban a server",
                 setup.team_two.role
@@ -374,7 +402,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         })
         .await?;
     } else {
-        m.edit(context, |d| {
+        m.edit(context.discord(), |d| {
             d.content(format!(
                 "\nIt is <@&{}> turn to pick a server",
                 setup.team_two.role
@@ -388,11 +416,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         })
         .await?;
     }
-    let mut cib = m
-        .message()
-        .await?
-        .await_component_interactions(&context.discord())
-        .build();
+    let mut cib = m.await_component_interactions(&context.discord()).build();
     while let Some(mci) = cib.next().await {
         let completed = match setup.current_phase {
             SetupState::MapVeto => {
@@ -410,6 +434,13 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
                 Ok(resp) => {
                     setup.finish(pool).await?;
                     send_conn_msg(&context, pool, &mci, &setup, resp).await;
+                    thread
+                        .edit_thread(context.discord(), |t| {
+                            t.locked(true);
+                            t.archived(true);
+                            t
+                        })
+                        .await?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -934,7 +965,7 @@ pub async fn start_server(
     println!("{:#?}", setup);
     mci.message.delete(&context.discord()).await?;
     let mut msg = mci.channel_id.send_message(&context.discord(), |m| {
-        m.content("Match setup completed, starting server **[#---]** _Duplicating server template..._")
+        m.content("Match setup completed, starting server [🌕🌑🌑🌑🌑]⏳ _Duplicating server template..._")
             .components(|c| c)
     }).await?;
     let dathost_config = DathostConfig {
@@ -964,7 +995,7 @@ pub async fn start_server(
         .await?;
 
     msg.edit(&context.discord(), |m| {
-        m.content("Match setup completed, starting server **[##--]** _Setting GSLT token..._")
+        m.content("Match setup completed, starting server [🌕🌕🌑🌑]⏳ _Setting GSLT token..._")
     })
     .await?;
 
@@ -992,7 +1023,7 @@ pub async fn start_server(
 
     msg.edit(&context.discord(), |m| {
         m.content(
-            "Match setup completed, starting server **[###-]** _Start server from match config..._",
+            "Match setup completed, starting server [🌕🌕🌕🌑]⏳ _Start server from match config..._",
         )
     })
     .await?;
@@ -1066,7 +1097,7 @@ pub async fn start_server(
     log::info!("{:#?}", start_resp.unwrap().text().await.unwrap());
 
     msg.edit(&context.discord(), |m| {
-        m.content("Match setup completed, server started **[####]**")
+        m.content("Match setup completed, server started [🌕🌕🌕🌕]")
     })
     .await?;
     Ok(dupl_resp)
