@@ -318,7 +318,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         return Ok(());
     }
     let mut current_match = current_match.unwrap();
-    if current_match.dathost.is_some() {
+    if current_match.dathost_match.is_some() {
         context
             .say("Your next match is already setup and in progress.")
             .await?;
@@ -388,7 +388,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         })
         .await?;
     let mut m = thread.say(context.discord(), "Starting setup...").await?;
-    if setup.servers_remaining.len() > 1 {
+    if setup.servers_remaining.len() > 2 {
         m.edit(context.discord(), |d| {
             d.content(format!(
                 "\nIt is <@&{}> turn to ban a server",
@@ -420,14 +420,14 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
     let mut cib = m.await_component_interactions(&context.discord()).build();
     while let Some(mci) = cib.next().await {
         let completed = match setup.current_phase {
+            SetupState::ServerPick => {
+                server_pick_phase(pool, &context, &mci, &mut setup, &series_setup.1).await?
+            }
             SetupState::MapVeto => {
                 map_veto_phase(pool, &context, &mci, &mut setup, &maps, &current_match).await?
             }
             SetupState::SidePick => {
                 side_pick_phase(pool, &context, &mci, &mut setup, &maps).await?
-            }
-            SetupState::ServerPick => {
-                server_pick_phase(pool, &context, &mci, &mut setup, &series_setup.1).await?
             }
         };
         if completed {
@@ -474,8 +474,7 @@ async fn server_pick_phase(
                 return Ok(false);
             }
             let choice_loc = mci.data.values.get(0).unwrap();
-            println!("{:#?}", setup.servers_remaining);
-            if setup.servers_remaining.len() >= 2 {
+            if setup.servers_remaining.len() > 2 {
                 let pos_remove = setup
                     .servers_remaining
                     .iter()
