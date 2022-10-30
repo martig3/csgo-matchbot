@@ -40,12 +40,13 @@ VALUES ('de_inferno'),
 CREATE TYPE series_type AS ENUM ('bo1', 'bo3', 'bo5');
 CREATE TABLE match_series
 (
-    id           SERIAL PRIMARY KEY,
-    team_one     integer     NOT NULL REFERENCES teams (id),
-    team_two     integer     NOT NULL REFERENCES teams (id),
-    series_type  series_type NOT NULL,
-    created_at   TIMESTAMPTZ NOT NULL,
-    completed_at TIMESTAMPTZ
+    id            SERIAL PRIMARY KEY,
+    team_one      integer     NOT NULL REFERENCES teams (id),
+    team_two      integer     NOT NULL REFERENCES teams (id),
+    series_type   series_type NOT NULL,
+    dathost_match text,
+    created_at    TIMESTAMPTZ NOT NULL,
+    completed_at  TIMESTAMPTZ
 );
 CREATE INDEX ON match_series (team_one);
 CREATE INDEX ON match_series (team_two);
