@@ -86,7 +86,7 @@ pub struct MatchSeries {
     pub team_one: i32,
     pub team_two: i32,
     pub series_type: SeriesType,
-    pub dathost: Option<String>,
+    pub dathost_match: Option<String>,
     pub created_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
 }
