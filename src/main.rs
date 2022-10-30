@@ -77,5 +77,7 @@ async fn main() {
 
     if let Err(error) = framework.run().await {
         log::error!("Error: {}", error);
+    } else {
+        log::info!("Started csgo-matchbot")
     }
 }

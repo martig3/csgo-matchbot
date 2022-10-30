@@ -187,7 +187,8 @@ pub(crate) async fn delete_match(
 ) -> Result<()> {
     let pool = &context.data().pool;
     let result = MatchSeries::delete(pool, match_id).await;
-    if let Err(_) = result {
+    if let Err(err) = result {
+        log::error!("{:#?}", err);
         context
             .say("Could not delete match, please provide a valid match id")
             .await?;

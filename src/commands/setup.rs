@@ -36,9 +36,12 @@ pub enum SetupState {
     SidePick,
     ServerPick,
 }
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DathostStartResponse {
+    id: String,
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ServerDuplicateResponse {
     pub game: Option<String>,
     pub id: String,
@@ -309,15 +312,13 @@ async fn bo5_setup(match_series: i32, team_one: i64, team_two: i64) -> (Vec<NewV
 pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
     let current_match = MatchSeries::next_user_match(pool, context.author().id.0 as i64).await;
-
     if current_match.is_err() {
         log::error!("{:#?}", current_match.err().unwrap());
         context.say("No scheduled matches found").await?;
         return Ok(());
     }
-    let current_match = current_match.unwrap();
-    let is_series_setup = Match::get_by_series(pool, current_match.id).await;
-    if is_series_setup.is_ok() && !is_series_setup.unwrap().is_empty() {
+    let mut current_match = current_match.unwrap();
+    if current_match.dathost.is_some() {
         context
             .say("Your next match is already setup and in progress.")
             .await?;
@@ -430,17 +431,10 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
             }
         };
         if completed {
-            match start_server(&context, pool, &mci, &mut setup).await {
+            match start_server(&context, pool, &mci, &mut setup, &mut current_match).await {
                 Ok(resp) => {
                     setup.finish(pool).await?;
                     send_conn_msg(&context, pool, &mci, &setup, resp).await;
-                    thread
-                        .edit_thread(context.discord(), |t| {
-                            t.locked(true);
-                            t.archived(true);
-                            t
-                        })
-                        .await?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -961,11 +955,12 @@ pub async fn start_server(
     pool: &PgPool,
     mci: &Arc<MessageComponentInteraction>,
     setup: &mut Setup,
+    current_match: &mut MatchSeries,
 ) -> Result<ServerDuplicateResponse, Error> {
     println!("{:#?}", setup);
     mci.message.delete(&context.discord()).await?;
     let mut msg = mci.channel_id.send_message(&context.discord(), |m| {
-        m.content("Match setup completed, starting server [🌕🌑🌑🌑🌑]⏳ _Duplicating server template..._")
+        m.content("Match setup completed, starting server...\n[🌕🌑🌑🌑🌑]⏳ _Duplicating server template..._")
             .components(|c| c)
     }).await?;
     let dathost_config = DathostConfig {
@@ -995,7 +990,7 @@ pub async fn start_server(
         .await?;
 
     msg.edit(&context.discord(), |m| {
-        m.content("Match setup completed, starting server [🌕🌕🌑🌑]⏳ _Setting GSLT token..._")
+        m.content("Match setup completed, starting server...\n[🌕🌕🌑🌑]⏳ _Setting GSLT token..._")
     })
     .await?;
 
@@ -1023,7 +1018,7 @@ pub async fn start_server(
 
     msg.edit(&context.discord(), |m| {
         m.content(
-            "Match setup completed, starting server [🌕🌕🌕🌑]⏳ _Start server from match config..._",
+            "Match setup completed, starting server...\n[🌕🌕🌕🌑]⏳ _Start server from match config..._",
         )
     })
     .await?;
@@ -1085,6 +1080,10 @@ pub async fn start_server(
         eprintln!("{:#?}", err);
         return Err(Error::from(err));
     }
+    let start_info = start_resp?.json::<DathostStartResponse>().await?;
+    current_match
+        .update_dathost_match(pool, start_info.id)
+        .await?;
     Server::add(
         pool,
         setup.match_series.unwrap(),
@@ -1094,10 +1093,9 @@ pub async fn start_server(
         dupl_resp.ports.gotv as i32,
     )
     .await?;
-    log::info!("{:#?}", start_resp.unwrap().text().await.unwrap());
 
     msg.edit(&context.discord(), |m| {
-        m.content("Match setup completed, server started [🌕🌕🌕🌕]")
+        m.content("Match setup completed, server started\n[🌕🌕🌕🌕]")
     })
     .await?;
     Ok(dupl_resp)

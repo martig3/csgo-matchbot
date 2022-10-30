@@ -86,6 +86,7 @@ pub struct MatchSeries {
     pub team_one: i32,
     pub team_two: i32,
     pub series_type: SeriesType,
+    pub dathost: Option<String>,
     pub created_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
 }
@@ -281,6 +282,20 @@ impl MatchSeries {
         .await?)
     }
 
+    pub async fn update_dathost_match(
+        &self,
+        executor: impl PgExecutor<'_>,
+        dathost_match_id: String,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            "UPDATE match_series SET dathost_match = $1 WHERE id = $2",
+            dathost_match_id,
+            self.id
+        )
+        .execute(executor)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
     pub async fn next_user_match(executor: impl PgExecutor<'_>, user: i64) -> Result<MatchSeries> {
         Ok(sqlx::query_as(
             "
@@ -309,11 +324,10 @@ impl MatchSeries {
             format!(
                 "select ms.*
                     from match_series ms
-                    join match m on ms.id = m.match_series
-                    join teams t on (t.id = ms.team_one or ms.team_two = t.id)
+                    join teams t on t.id = ms.team_one or ms.team_two = t.id
                     join team_members tm on t.id = tm.team
                 where tm.member = $2
-                    and completed_at {}
+                    and ms.completed_at {}
                 order by ms.id desc
                 limit $1",
                 completed_clause
@@ -325,13 +339,27 @@ impl MatchSeries {
         .fetch_all(executor)
         .await?)
     }
-    pub async fn delete(executor: impl PgExecutor<'_>, id: i32) -> Result<bool> {
+    pub async fn delete(executor: impl PgExecutor<'_>, id: i32) -> Result<bool, sqlx::Error> {
         let result = sqlx::query!("DELETE FROM match_series where id = $1", id)
             .execute(executor)
             .await?;
         Ok(result.rows_affected() == 1)
     }
 
+    async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchSeries>> {
+        Ok(sqlx::query_as(
+            "select ms.*
+                 from match_series ms
+                   join match m on m.match_series = ms.id
+                   join match_scores mi on m.id = mi.match_id
+                   join servers s on s.match_series = ms.id
+                 where ms.completed_at is null
+                   and m.completed_at is null
+                 ",
+        )
+        .fetch_all(executor)
+        .await?)
+    }
     pub async fn info_string(
         &self,
         pool: &PgPool,
@@ -398,7 +426,7 @@ impl Match {
         .fetch_one(executor)
         .await?)
     }
-
+    #[allow(dead_code)]
     pub(crate) async fn get_by_series(
         executor: impl PgExecutor<'_>,
         match_series: i32,
@@ -414,13 +442,13 @@ impl Match {
         .fetch_all(executor)
         .await?)
     }
-    async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchSeries>> {
+    async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<Match>> {
         Ok(sqlx::query_as(
-            "select ms.*
+            "select m.*
                  from match_series ms
                    join match m on m.match_series = ms.id
                    join match_scores mi on m.id = mi.match_id
-                   join servers s on s.match_series = s.id
+                   join servers s on s.match_series = ms.id
                  where ms.completed_at is null
                    and m.completed_at is null
                  ",
@@ -480,14 +508,15 @@ pub(crate) async fn scheduled(context: Context<'_>) -> Result<()> {
 pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
     let info = MatchScore::get_in_progress(pool).await?;
+    let match_series = MatchSeries::get_in_progress(pool).await?;
     let matches = Match::get_in_progress(pool).await?;
-    if matches.is_empty() || info.is_empty() {
+    if match_series.is_empty() || info.is_empty() {
         context.say("No matches in progress were found").await?;
         return Ok(());
     }
     let servers = Server::get_live(pool).await?;
     let mut teams = Vec::new();
-    for m in &matches {
+    for m in &match_series {
         teams.push(Team::get(pool, m.team_one).await?);
         teams.push(Team::get(pool, m.team_two).await?);
     }
@@ -498,9 +527,16 @@ pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
             let m_info = info.iter().find(|i| i.match_id == m.id).unwrap();
             let team_one_score = m_info.team_one_score;
             let team_two_score = m_info.team_two_score;
-            let team_one_role = teams.iter().find(|t| t.id == m.team_one).unwrap().role;
-            let team_two_role = teams.iter().find(|t| t.id == m.team_two).unwrap().role;
-            let server = servers.iter().find(|s| s.match_series == m.id).unwrap();
+            let series = match_series
+                .iter()
+                .find(|ms| ms.id == m.match_series)
+                .unwrap();
+            let team_one_role = teams.iter().find(|t| t.id == series.team_one).unwrap().role;
+            let team_two_role = teams.iter().find(|t| t.id == series.team_two).unwrap().role;
+            let server = servers
+                .iter()
+                .find(|s| s.match_series == series.id)
+                .unwrap();
             s.push_str(format!("`#{}` ", m.id).as_str());
             s.push_str(format!("<@&{}> **`{}`**", &team_one_role, team_one_score).as_str());
             s.push_str(" - ");
