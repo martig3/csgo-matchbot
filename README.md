@@ -9,19 +9,23 @@ Discord bot for managing & organizing team matches
 - Automated server setup via Dathost integration
 - Integration with [matchbot-api](https://github.com/martig3/matchbot-api) for other automated features
 
-### Example Screenshots
+## Usage
 
-// TODO
-
-### Setup
-
+Create `.env` file with the following fields:
 ```
-DATABASE_URL=<full postgres db url including user & password>
+DATABASE_URL=<db url i.e. postgres://postgres:postgres@localhost/matchbot>
 DISCORD_TOKEN=<discord token>
 STEAM_API_KEY=<steam web api key>
+MATCH_END_WEBHOOK_URL=<url, optional>
+ROUND_END_WEBHOOK_URL=<url, optional>
+DATHOST_USER=<dathost account username/email>
+DATHOST_PASSWORD=<dathost account password>
 ```
 
-Start the bot via appropriate release binary (or clone & build yourself if you want) and navigate to the following url -
-make sure to insert your bots client id in this url - to add the bot to your
-server: `https://discord.com/api/oauth2/authorize?client_id=<your_bot_clientid>&permissions=16780352&scope=bot`
+### Docker
+`docker run --env-file .env -d ghcr.io/martig3/csgo-matchbot:latest`
+### Add bot to discord server
+Bot client id can be found under OAuth2 > General
+
+`https://discord.com/api/oauth2/authorize?client_id=<bot client id>&permissions=326685952000&scope=bot`
 
