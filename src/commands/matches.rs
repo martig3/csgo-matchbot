@@ -6,11 +6,15 @@ use crate::Context;
 use anyhow::Result;
 use poise::command;
 use serde::{Deserialize, Serialize};
+use serenity::builder::{CreateActionRow, CreateButton};
+use serenity::model::application::component::ButtonStyle;
+use serenity::model::channel::ReactionType;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::{FromRow, Type};
 use sqlx::{PgExecutor, PgPool};
+use std::borrow::Borrow;
 use std::str::FromStr;
-use std::{fmt, i32};
+use std::{env, fmt, i32};
 use strum::EnumIter;
 
 #[allow(unused)]
@@ -581,13 +585,13 @@ pub(crate) async fn completed(context: Context<'_>) -> Result<()> {
     let mut s = String::new();
     for m in matches {
         let scores = MatchScore::get_by_series(pool, m.id).await?;
-        let score_values = get_series_score(&scores, m.series_type);
+        let (team_one_score, team_two_score) = get_series_score(&scores, m.series_type);
         let team_one_name = &teams.iter().find(|t| t.id == m.team_one).unwrap().name;
         let team_two_name = &teams.iter().find(|t| t.id == m.team_two).unwrap().name;
         s.push_str(format!("`#{}` ", m.id).as_str());
-        s.push_str(format!("{} **`{}`**", &team_one_name, score_values.0).as_str());
+        s.push_str(format!("{} **`{}`**", &team_one_name, team_one_score).as_str());
         s.push_str(" - ");
-        s.push_str(format!("**`{}`** {}", score_values.1, &team_two_name).as_str());
+        s.push_str(format!("**`{}`** {}", team_two_score, &team_two_name).as_str());
         s.push_str("\n");
     }
     context.say(s).await?;
@@ -602,7 +606,7 @@ pub(crate) async fn completed(context: Context<'_>) -> Result<()> {
 )]
 pub(crate) async fn find(
     context: Context<'_>,
-    #[description = "Match id"] match_id: i32,
+    #[description = "Match number"] match_id: i32,
 ) -> Result<()> {
     let pool = &context.data().pool;
     let series = MatchSeries::get(pool, match_id).await?;
@@ -618,17 +622,17 @@ pub(crate) async fn find(
     let matches = Match::get_by_series(pool, match_id).await?;
     let maps = Map::get_all(pool, false).await?;
     let scores = MatchScore::get_by_series(pool, match_id).await?;
-    let score_values = get_series_score(&scores, series.series_type);
-    let mut s = format!("{} **`{}`**", &team_one.name, score_values.0);
+    let (team_one_score, team_two_score) = get_series_score(&scores, series.series_type);
+    let mut s = format!("**{}** `{}`", &team_one.name, team_one_score);
     s.push_str(" - ");
-    s.push_str(format!("**`{}`** {}", score_values.1, &team_two.name).as_str());
-    s.push_str("\n");
-    for (i, m) in matches.into_iter().enumerate() {
+    s.push_str(format!("`{}` **{}**", team_two_score, &team_two.name).as_str());
+    s.push_str("\n\n");
+    for (i, m) in matches.iter().enumerate() {
         let picked_by = Team::get(pool, m.picked_by).await?;
         let score = scores.iter().find(|i| i.match_id == m.id).unwrap();
         s.push_str(
             format!(
-                "**{}. `{}` ",
+                "{}. `{}` ",
                 i + 1,
                 maps.iter().find(|map| map.id == m.map).unwrap().name,
             )
@@ -639,11 +643,49 @@ pub(crate) async fn find(
             s.push_str(" - ");
             s.push_str(format!("**`{}`**", score.team_two_score).as_str());
         }
-        s.push_str(format!(" - picked by: {}\n", &picked_by.name,).as_str())
+        s.push_str(format!(" - picked by: **{}**\n", &picked_by.name,).as_str())
     }
-    s.push_str("\n");
     s.push_str(series.veto_info(pool, None).await?.as_str());
+    let components = match series.series_type {
+        Bo1 => {
+            let map_name = maps
+                .iter()
+                .find(|map| &map.id == &matches[0].map)
+                .unwrap()
+                .name
+                .clone();
+            create_demo_link_row_bo1(series.dathost_match.unwrap(), map_name.borrow())
+        }
+        Bo3 => None,
+        Bo5 => None,
+    };
+    context
+        .send(|b| {
+            b.ephemeral(true);
+            b.content(s);
+            if let Some(row) = components {
+                b.components(|c| c.add_action_row(row));
+            }
+            b
+        })
+        .await?;
     Ok(())
+}
+
+fn create_demo_link_row_bo1(dathost_id: String, map_name: &str) -> Option<CreateActionRow> {
+    let bucket_url = env::var("BUCKET_URL");
+    if bucket_url.is_err() {
+        return None;
+    }
+    let mut ar = CreateActionRow::default();
+    let mut conn_button = CreateButton::default();
+    conn_button.label(map_name);
+    conn_button.style(ButtonStyle::Link);
+    conn_button.emoji(ReactionType::Unicode("📺".parse().unwrap()));
+    let url = format!("{}/{}.dem", bucket_url.unwrap(), dathost_id);
+    conn_button.url(url);
+    ar.add_button(conn_button);
+    Some(ar)
 }
 
 pub fn get_series_score(scores: &Vec<MatchScore>, series_type: SeriesType) -> (i32, i32) {
@@ -658,7 +700,7 @@ pub fn get_series_score(scores: &Vec<MatchScore>, series_type: SeriesType) -> (i
         }),
     };
     let team_two_score = match series_type {
-        Bo1 => scores[0].team_one_score,
+        Bo1 => scores[0].team_two_score,
         _ => scores.iter().fold(0, |a, s| {
             if s.team_one_score < s.team_two_score {
                 a + 1
