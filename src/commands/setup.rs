@@ -828,7 +828,7 @@ async fn map_veto_phase(
                     },
                 })
                 .collect();
-            let info_str = curr_series.info_string(pool, Some(curr_vote_info)).await?;
+            let info_str = curr_series.veto_info(pool, Some(curr_vote_info)).await?;
             mci.create_interaction_response(&context.discord(), |r| {
                 r.kind(InteractionResponseType::UpdateMessage)
                     .interaction_response_data(|d| {

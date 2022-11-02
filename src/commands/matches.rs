@@ -262,6 +262,14 @@ impl MatchSeries {
         .fetch_one(executor)
         .await?)
     }
+    async fn get(executor: impl PgExecutor<'_>, id: i32) -> Result<Option<MatchSeries>> {
+        Ok(
+            sqlx::query_as(format!("select * from match_series where id = $1",).as_str())
+                .bind(id)
+                .fetch_optional(executor)
+                .await?,
+        )
+    }
     async fn get_all(
         executor: impl PgExecutor<'_>,
         limit: u64,
@@ -360,7 +368,7 @@ impl MatchSeries {
         .fetch_all(executor)
         .await?)
     }
-    pub async fn info_string(
+    pub async fn veto_info(
         &self,
         pool: &PgPool,
         vote_info: Option<Vec<VoteInfo>>,
@@ -461,7 +469,7 @@ impl Match {
 #[command(
     slash_command,
     guild_only,
-    subcommands("scheduled", "inprogress", "completed")
+    subcommands("scheduled", "inprogress", "completed", "find")
 )]
 pub(crate) async fn matches(_context: Context<'_>) -> Result<()> {
     Ok(())
@@ -573,34 +581,91 @@ pub(crate) async fn completed(context: Context<'_>) -> Result<()> {
     let mut s = String::new();
     for m in matches {
         let scores = MatchScore::get_by_series(pool, m.id).await?;
-        let team_one_score = match m.series_type {
-            Bo1 => scores[0].team_one_score,
-            _ => scores.iter().fold(0, |a, s| {
-                if s.team_one_score > s.team_two_score {
-                    a + 1
-                } else {
-                    a
-                }
-            }),
-        };
-        let team_two_score = match m.series_type {
-            Bo1 => scores[0].team_one_score,
-            _ => scores.iter().fold(0, |a, s| {
-                if s.team_one_score < s.team_two_score {
-                    a + 1
-                } else {
-                    a
-                }
-            }),
-        };
+        let score_values = get_series_score(&scores, m.series_type);
         let team_one_name = &teams.iter().find(|t| t.id == m.team_one).unwrap().name;
         let team_two_name = &teams.iter().find(|t| t.id == m.team_two).unwrap().name;
         s.push_str(format!("`#{}` ", m.id).as_str());
-        s.push_str(format!("{} **`{}`**", &team_one_name, team_one_score).as_str());
+        s.push_str(format!("{} **`{}`**", &team_one_name, score_values.0).as_str());
         s.push_str(" - ");
-        s.push_str(format!("**`{}`** {}", team_two_score, &team_two_name).as_str());
+        s.push_str(format!("**`{}`** {}", score_values.1, &team_two_name).as_str());
         s.push_str("\n");
     }
     context.say(s).await?;
     Ok(())
+}
+
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Show info for a match")
+)]
+pub(crate) async fn find(
+    context: Context<'_>,
+    #[description = "Match id"] match_id: i32,
+) -> Result<()> {
+    let pool = &context.data().pool;
+    let series = MatchSeries::get(pool, match_id).await?;
+    if series.is_none() {
+        context
+            .say(format!("Could not find match with id: `{}`", match_id))
+            .await?;
+        return Ok(());
+    }
+    let series = series.unwrap();
+    let team_one = Team::get(pool, series.team_one).await?;
+    let team_two = Team::get(pool, series.team_two).await?;
+    let matches = Match::get_by_series(pool, match_id).await?;
+    let maps = Map::get_all(pool, false).await?;
+    let scores = MatchScore::get_by_series(pool, match_id).await?;
+    let score_values = get_series_score(&scores, series.series_type);
+    let mut s = format!("{} **`{}`**", &team_one.name, score_values.0);
+    s.push_str(" - ");
+    s.push_str(format!("**`{}`** {}", score_values.1, &team_two.name).as_str());
+    s.push_str("\n");
+    for (i, m) in matches.into_iter().enumerate() {
+        let picked_by = Team::get(pool, m.picked_by).await?;
+        let score = scores.iter().find(|i| i.match_id == m.id).unwrap();
+        s.push_str(
+            format!(
+                "**{}. `{}` ",
+                i + 1,
+                maps.iter().find(|map| map.id == m.map).unwrap().name,
+            )
+            .as_str(),
+        );
+        if series.series_type != Bo1 {
+            s.push_str(format!("**`{}`**", score.team_one_score).as_str());
+            s.push_str(" - ");
+            s.push_str(format!("**`{}`**", score.team_two_score).as_str());
+        }
+        s.push_str(format!(" - picked by: {}\n", &picked_by.name,).as_str())
+    }
+    s.push_str("\n");
+    s.push_str(series.veto_info(pool, None).await?.as_str());
+    Ok(())
+}
+
+pub fn get_series_score(scores: &Vec<MatchScore>, series_type: SeriesType) -> (i32, i32) {
+    let team_one_score = match series_type {
+        Bo1 => scores[0].team_one_score,
+        _ => scores.iter().fold(0, |a, s| {
+            if s.team_one_score > s.team_two_score {
+                a + 1
+            } else {
+                a
+            }
+        }),
+    };
+    let team_two_score = match series_type {
+        Bo1 => scores[0].team_one_score,
+        _ => scores.iter().fold(0, |a, s| {
+            if s.team_one_score < s.team_two_score {
+                a + 1
+            } else {
+                a
+            }
+        }),
+    };
+    (team_one_score, team_two_score)
 }
