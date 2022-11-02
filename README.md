@@ -20,6 +20,7 @@ MATCH_END_WEBHOOK_URL=<url, optional>
 ROUND_END_WEBHOOK_URL=<url, optional>
 DATHOST_USER=<dathost account username/email>
 DATHOST_PASSWORD=<dathost account password>
+BUCKET_URL=<optional, s3 bucket base url for match demos (see matchbot-api integration)>
 ```
 
 ### Docker
