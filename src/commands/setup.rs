@@ -962,15 +962,12 @@ pub async fn start_server(
         m.content("Match setup completed, starting server...\n[🌕🌑🌑🌑🌑]⏳ _Duplicating server template..._")
             .components(|c| c)
     }).await?;
-    let dathost_config = DathostConfig {
-        user: env::var("DATHOST_USER").unwrap(),
-        password: env::var("DATHOST_PASSWORD").unwrap(),
-    };
-    let client = Client::new();
     let sync_url = format!(
         "https://dathost.net/api/0.1/game-servers/{server_id}/sync-files",
         server_id = encode(&setup.server_id.clone().unwrap())
     );
+    let dathost_config = get_dathost_config();
+    let client = Client::new();
     client
         .post(sync_url)
         .basic_auth(&dathost_config.user, Some(&dathost_config.password))
@@ -1098,6 +1095,13 @@ pub async fn start_server(
     })
     .await?;
     Ok(dupl_resp)
+}
+
+pub fn get_dathost_config() -> DathostConfig {
+    DathostConfig {
+        user: env::var("DATHOST_USER").unwrap(),
+        password: env::var("DATHOST_PASSWORD").unwrap(),
+    }
 }
 
 pub async fn create_gslt(server_id: &String, match_id: i32) -> Result<String> {
