@@ -666,7 +666,7 @@ pub(crate) async fn find(
     }
     s.push_str(series.veto_info(pool, None).await?.as_str());
     let components = match series.completed_at {
-        Some(_) => match series.series_type {
+        Some(_) => match &series.series_type {
             Bo1 => {
                 let map_name = maps
                     .iter()
@@ -677,12 +677,13 @@ pub(crate) async fn find(
                 create_demo_link_row_bo1(series.dathost_match.unwrap(), &map_name)
             }
             _ => {
-                let dathost_matches = get_series_dathost_matches(series.dathost_match.unwrap())
-                    .await?
-                    .into_iter()
-                    .take(played_match_ids.len())
-                    .collect();
-                create_demo_link_row_bo3(dathost_matches)
+                let dathost_matches =
+                    get_series_dathost_matches(&series.dathost_match.as_ref().unwrap())
+                        .await?
+                        .into_iter()
+                        .take(played_match_ids.len())
+                        .collect();
+                create_demo_link_row_series(&series.dathost_match.unwrap(), dathost_matches)
             }
         },
         None => None,
@@ -700,7 +701,7 @@ pub(crate) async fn find(
     Ok(())
 }
 
-async fn get_series_dathost_matches(dathost_series_id: String) -> Result<Vec<DathostMatch>> {
+async fn get_series_dathost_matches(dathost_series_id: &String) -> Result<Vec<DathostMatch>> {
     let dathost_config = get_dathost_config();
     let client = Client::new();
     let matches: Vec<DathostMatch> = client
@@ -727,13 +728,16 @@ fn create_demo_link_row_bo1(dathost_id: String, map_name: &str) -> Option<Create
     Some(ar)
 }
 
-fn create_demo_link_row_bo3(matches: Vec<DathostMatch>) -> Option<CreateActionRow> {
+fn create_demo_link_row_series(
+    series_id: &String,
+    matches: Vec<DathostMatch>,
+) -> Option<CreateActionRow> {
     let Ok(bucket_url) = env::var("BUCKET_URL") else {
         return None;
     };
     let mut ar = CreateActionRow::default();
-    for m in matches {
-        let link_btn = get_demo_btn(m.map, bucket_url.to_string(), m.id);
+    for (i, m) in matches.iter().enumerate() {
+        let link_btn = get_series_demo_btn(&m.map, bucket_url.to_string(), series_id, i + 1);
         ar.add_button(link_btn);
     }
     Some(ar)
@@ -745,6 +749,21 @@ fn get_demo_btn(map_name: String, bucket_url: String, dathost_id: String) -> Cre
     conn_button.style(ButtonStyle::Link);
     conn_button.emoji(ReactionType::Unicode("📺".parse().unwrap()));
     let url = format!("{}/{}.dem", bucket_url, dathost_id);
+    conn_button.url(url);
+    conn_button
+}
+
+fn get_series_demo_btn(
+    map_name: &String,
+    bucket_url: String,
+    series_id: &String,
+    index: usize,
+) -> CreateButton {
+    let mut conn_button = CreateButton::default();
+    conn_button.label(map_name);
+    conn_button.style(ButtonStyle::Link);
+    conn_button.emoji(ReactionType::Unicode("📺".parse().unwrap()));
+    let url = format!("{}/{}_{}.dem", bucket_url, series_id, index);
     conn_button.url(url);
     conn_button
 }
