@@ -1,12 +1,10 @@
 use crate::commands::maps::Map;
 use crate::commands::matches::SeriesType::{Bo1, Bo3, Bo5};
 use crate::commands::matches::VoteType::Veto;
-use crate::commands::setup::get_dathost_config;
 use crate::commands::team::Team;
 use crate::Context;
 use anyhow::Result;
 use poise::command;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serenity::builder::{CreateActionRow, CreateButton};
 use serenity::model::application::component::ButtonStyle;
@@ -642,6 +640,7 @@ pub(crate) async fn find(
     s.push_str(format!("`{}` **{}**", team_two_score, &team_two.name).as_str());
     s.push_str("\n\n");
     let mut played_match_ids: Vec<i32> = Vec::new();
+    let mut map_names = Vec::new();
     for (i, m) in matches.iter().enumerate() {
         let picked_by = Team::get(pool, m.picked_by).await?;
         let score = scores.iter().find(|i| i.match_id == m.id).unwrap();
@@ -649,14 +648,9 @@ pub(crate) async fn find(
             continue;
         }
         played_match_ids.push(m.id);
-        s.push_str(
-            format!(
-                "{}. `{}` ",
-                i + 1,
-                maps.iter().find(|map| map.id == m.map).unwrap().name,
-            )
-            .as_str(),
-        );
+        let map_name = &maps.iter().find(|map| map.id == m.map).unwrap().name;
+        s.push_str(format!("{}. `{}` ", i + 1, map_name,).as_str());
+        map_names.push(map_name);
         if series.series_type != Bo1 {
             s.push_str(format!("**`{}`**", score.team_one_score).as_str());
             s.push_str(" - ");
@@ -676,15 +670,7 @@ pub(crate) async fn find(
                     .clone();
                 create_demo_link_row_bo1(series.dathost_match.unwrap(), &map_name)
             }
-            _ => {
-                let dathost_matches =
-                    get_series_dathost_matches(&series.dathost_match.as_ref().unwrap())
-                        .await?
-                        .into_iter()
-                        .take(played_match_ids.len())
-                        .collect();
-                create_demo_link_row_series(&series.dathost_match.unwrap(), dathost_matches)
-            }
+            _ => create_demo_link_row_series(&series.dathost_match.unwrap(), map_names),
         },
         None => None,
     };
@@ -701,23 +687,6 @@ pub(crate) async fn find(
     Ok(())
 }
 
-async fn get_series_dathost_matches(dathost_series_id: &String) -> Result<Vec<DathostMatch>> {
-    let dathost_config = get_dathost_config();
-    let client = Client::new();
-    let matches: Vec<DathostMatch> = client
-        .get(format!(
-            "https://dathost.net/api/0.1/match-series/{}",
-            dathost_series_id
-        ))
-        .basic_auth(dathost_config.user, Some(&dathost_config.password))
-        .send()
-        .await?
-        .json::<DathostSeriesResponse>()
-        .await?
-        .matches;
-    Ok(matches)
-}
-
 fn create_demo_link_row_bo1(dathost_id: String, map_name: &str) -> Option<CreateActionRow> {
     let Ok(bucket_url) = env::var("BUCKET_URL") else {
         return None;
@@ -730,14 +699,14 @@ fn create_demo_link_row_bo1(dathost_id: String, map_name: &str) -> Option<Create
 
 fn create_demo_link_row_series(
     series_id: &String,
-    matches: Vec<DathostMatch>,
+    map_names: Vec<&String>,
 ) -> Option<CreateActionRow> {
     let Ok(bucket_url) = env::var("BUCKET_URL") else {
         return None;
     };
     let mut ar = CreateActionRow::default();
-    for (i, m) in matches.iter().enumerate() {
-        let link_btn = get_series_demo_btn(&m.map, bucket_url.to_string(), series_id, i + 1);
+    for (i, m) in map_names.iter().enumerate() {
+        let link_btn = get_series_demo_btn(&m, bucket_url.to_string(), series_id, i + 1);
         ar.add_button(link_btn);
     }
     Some(ar)
