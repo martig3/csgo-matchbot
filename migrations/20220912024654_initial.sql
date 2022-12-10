@@ -46,7 +46,8 @@ CREATE TABLE match_series
     series_type   series_type NOT NULL,
     dathost_match text,
     created_at    TIMESTAMPTZ NOT NULL,
-    completed_at  TIMESTAMPTZ
+    completed_at  TIMESTAMPTZ, 
+    thread INT8
 );
 CREATE INDEX ON match_series (team_one);
 CREATE INDEX ON match_series (team_two);
