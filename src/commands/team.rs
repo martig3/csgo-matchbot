@@ -196,19 +196,19 @@ pub(crate) async fn create(
     }
 
     let role = guild
-        .create_role(context.discord(), |role| {
+        .create_role(context.serenity_context(), |role| {
             role.name(name.clone()).mentionable(true)
         })
         .await?
         .id;
 
     if let Err(err) = create_team(pool, role.0, &name, author.0).await {
-        guild.delete_role(context.discord(), role).await?;
+        guild.delete_role(context.serenity_context(), role).await?;
         return Err(err);
     }
 
-    let mut member = guild.member(context.discord(), author).await?;
-    member.add_role(context.discord(), role).await?;
+    let mut member = guild.member(context.serenity_context(), author).await?;
+    member.add_role(context.serenity_context(), role).await?;
 
     context.say(format!("Team <@&{role}> created!")).await?;
     Ok(())
@@ -298,15 +298,15 @@ pub(crate) async fn leave(context: Context<'_>) -> Result<()> {
     }
 
     Team::remove_member(pool, team.id, author.0 as i64).await?;
-    let mut member = guild.member(context.discord(), author.0).await?;
+    let mut member = guild.member(context.serenity_context(), author.0).await?;
     member
-        .remove_role(context.discord(), team.role as u64)
+        .remove_role(context.serenity_context(), team.role as u64)
         .await?;
     let member_vec: Vec<u64> = members.into_iter().map(|n| n as u64).collect();
     if [author.0] == member_vec.as_slice() {
         Team::delete(pool, team.id).await?;
         guild
-            .delete_role(context.discord(), team.role as u64)
+            .delete_role(context.serenity_context(), team.role as u64)
             .await?;
         context.say("Team disbanded.").await?;
     } else {
@@ -364,7 +364,7 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
     }
 
     let mut message = user
-        .dm(context.discord(), |message| {
+        .dm(context.serenity_context(), |message| {
             message
                 .content(format!(
                     "You have been invited to join the <@&{}> team by <@{}>!",
@@ -391,7 +391,7 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
     let reply = context.say("Invitation sent.").await?;
 
     let interaction = message
-        .await_component_interaction(context.discord())
+        .await_component_interaction(context.serenity_context())
         .author_id(user.id)
         .await;
     let response = match &interaction {
@@ -413,7 +413,7 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
         })
         .await?;
     message
-        .edit(context.discord(), |message| {
+        .edit(context.serenity_context(), |message| {
             message
                 .content(format!("You have {response} the invitation!"))
                 .set_components(Default::default())
@@ -423,8 +423,10 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
     match response {
         "accepted" => {
             Team::add_member(pool, team.id, user.id.0 as i64).await?;
-            let mut member = guild.member(context.discord(), user.id).await?;
-            member.add_role(context.discord(), team.role as u64).await?;
+            let mut member = guild.member(context.serenity_context(), user.id).await?;
+            member
+                .add_role(context.serenity_context(), team.role as u64)
+                .await?;
         }
         "declined" => {}
         _ => unreachable!(),
@@ -487,9 +489,9 @@ pub(crate) async fn kick(context: Context<'_>, user: User) -> Result<()> {
 
     Team::remove_member(pool, team.id, user.id.0 as i64).await?;
 
-    let mut member = guild.member(context.discord(), user.id).await?;
+    let mut member = guild.member(context.serenity_context(), user.id).await?;
     member
-        .remove_role(context.discord(), team.role as u64)
+        .remove_role(context.serenity_context(), team.role as u64)
         .await?;
 
     context
@@ -555,9 +557,9 @@ pub(crate) async fn transfer(
 
     Team::update_capitan(pool, team.id, user.id.0 as i64).await?;
 
-    let mut member = guild.member(context.discord(), user.id).await?;
+    let mut member = guild.member(context.serenity_context(), user.id).await?;
     member
-        .remove_role(context.discord(), team.role as u64)
+        .remove_role(context.serenity_context(), team.role as u64)
         .await?;
 
     context
