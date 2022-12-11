@@ -496,6 +496,19 @@
     },
     "query": "SELECT member FROM team_members WHERE team = $1"
   },
+  "aa49920a53042aed03824ec4741703ca156c98c39f3f38d1555c8ff0b91cc154": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Int4"
+        ]
+      }
+    },
+    "query": "UPDATE match_series SET dathost_match = $1 WHERE id = $2"
+  },
   "ab148cc6ff26b86c1fcbe38e4769bb783a973d717da070054de67f0ffb599c9f": {
     "describe": {
       "columns": [
@@ -598,6 +611,19 @@
       }
     },
     "query": "INSERT INTO steam_ids (discord, steam) VALUES ($1, $2)\n                    ON CONFLICT (discord) DO UPDATE\n                    SET steam = $2"
+  },
+  "e14891eb88a55f8244bc5527f929b405fe5fcb03de820fa5b75633210027f20e": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Int8",
+          "Int4"
+        ]
+      }
+    },
+    "query": "UPDATE match_series SET thread = $1 WHERE id = $2"
   },
   "ee7f4a642e3eea9fce25d700f0c9b4c617ea556e4952253499a51120cdce315a": {
     "describe": {
