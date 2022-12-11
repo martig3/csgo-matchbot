@@ -84,14 +84,25 @@ pub(crate) async fn steamid(context: ApplicationContext<'_, Data, Error>) -> Res
     let data: SteamIDModal = SteamIDModal::execute(context).await?;
     let steamid_str = data.steamid.trim();
     let steamid64 = SteamId::parse(steamid_str);
-    if let Ok(steamid64) = steamid64 {
-        SteamUser::add(
-            &context.data.pool,
-            context.interaction.user().id.0 as i64,
-            u64::from(steamid64) as i64,
-        )
-        .await?;
+    let Ok(steamid64) = steamid64 else {
+        error!("Error parsing '{}'", steamid_str);
         context.interaction
+        .unwrap()
+        .create_followup_message(
+        &context.discord.http,
+        |m| m
+                .ephemeral(true)
+                .content(format!("Error parsing steamid '{}', contact an admin", steamid_str)))
+        .await?;
+        return Ok(());
+    };
+    SteamUser::add(
+        &context.data.pool,
+        context.interaction.user().id.0 as i64,
+        u64::from(steamid64) as i64,
+    )
+    .await?;
+    context.interaction
             .unwrap()
             .create_followup_message(
             &context.discord.http,
@@ -101,8 +112,5 @@ pub(crate) async fn steamid(context: ApplicationContext<'_, Data, Error>) -> Res
                                 \nPlease verify this is the account you will be playing on, otherwise you will not be able to join a match server!",
                                      steamid64.community_link())))
             .await?;
-    } else {
-        error!("Error parsing '{}'", steamid_str)
-    }
     Ok(())
 }
