@@ -390,7 +390,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         .await?;
     let thread = context
         .channel_id()
-        .create_public_thread(context.discord(), m.message().await?.id, |t| {
+        .create_public_thread(context.serenity_context(), m.message().await?.id, |t| {
             t.kind(ChannelType::PublicThread);
             t.name(format!(
                 "Match Setup - {} vs {} ",
@@ -402,9 +402,11 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
     current_match
         .update_thread(pool, thread.id.0.try_into().unwrap())
         .await?;
-    let mut m = thread.say(context.discord(), "Starting setup...").await?;
+    let mut m = thread
+        .say(context.serenity_context(), "Starting setup...")
+        .await?;
     if setup.servers_remaining.len() > 2 {
-        m.edit(context.discord(), |d| {
+        m.edit(context.serenity_context(), |d| {
             d.content(format!(
                 "\nIt is <@&{}> turn to ban a server",
                 setup.team_two.role
@@ -418,7 +420,7 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         })
         .await?;
     } else {
-        m.edit(context.discord(), |d| {
+        m.edit(context.serenity_context(), |d| {
             d.content(format!(
                 "\nIt is <@&{}> turn to pick a server",
                 setup.team_two.role
@@ -432,7 +434,9 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         })
         .await?;
     }
-    let mut cib = m.await_component_interactions(&context.discord()).build();
+    let mut cib = m
+        .await_component_interactions(&context.serenity_context())
+        .build();
     while let Some(mci) = cib.next().await {
         let completed = match setup.current_phase {
             SetupState::ServerPick => {
@@ -477,7 +481,7 @@ async fn server_pick_phase(
     match t.unwrap() {
         Some(team) => {
             if setup.server_veto_team != team.role {
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|d| {
                             d.ephemeral(true)
@@ -516,7 +520,7 @@ async fn server_pick_phase(
                     setup.server_veto_team, previous_step, choice_loc, next_team, current_step
                 );
                 setup.server_veto_team = next_team;
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::UpdateMessage)
                         .interaction_response_data(|d| {
                             d.content(content).components(|c| {
@@ -544,7 +548,7 @@ async fn server_pick_phase(
                 "<@&{}> picked `{}`, server pick phase completed.\n{}",
                 setup.server_veto_team, choice_loc, init_veto_msg
             );
-            mci.create_interaction_response(&context.discord(), |r| {
+            mci.create_interaction_response(&context.serenity_context(), |r| {
                 r.kind(InteractionResponseType::UpdateMessage)
                     .interaction_response_data(|d| {
                         d.content(content).components(|c| {
@@ -587,7 +591,7 @@ async fn side_pick_phase(
                 setup.team_one.role
             };
             if picked_by == team.role {
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|d| {
                             d.ephemeral(true)
@@ -611,7 +615,7 @@ async fn side_pick_phase(
                 };
                 let next_map = &setup.maps_sel.get(setup.current_step + 1).unwrap().map_id;
                 let next_map_name = &maps.iter().find(|m| &m.id == next_map).unwrap().name;
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::UpdateMessage)
                         .interaction_response_data(|d| {
                             d.content(format!(
@@ -677,7 +681,7 @@ pub async fn send_conn_msg(
     let eos = eos_str(pool, &setup).await.unwrap();
     let mut m = msg
         .channel_id
-        .send_message(&context.discord(), |m| {
+        .send_message(&context.serenity_context(), |m| {
             m.content(eos).components(|c| {
                 c.add_action_row(create_server_conn_button_row(&t_url, &t_gotv_url, true))
             })
@@ -685,14 +689,14 @@ pub async fn send_conn_msg(
         .await
         .unwrap();
     let mut cib = m
-        .await_component_interactions(&context.discord())
+        .await_component_interactions(&context.serenity_context())
         .timeout(Duration::from_secs(60 * 5))
         .build();
     loop {
         let opt = cib.next().await;
         match opt {
             Some(mci) => {
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|d| {
                             d.ephemeral(true).content(format!(
@@ -707,7 +711,7 @@ pub async fn send_conn_msg(
             None => {
                 // remove console cmds interaction on timeout
                 let eos = eos_str(pool, &setup).await.unwrap();
-                m.edit(&context.discord(), |m| {
+                m.edit(&context.serenity_context(), |m| {
                     m.content(eos).components(|c| {
                         c.add_action_row(create_server_conn_button_row(&t_url, &t_gotv_url, false))
                     })
@@ -767,7 +771,7 @@ async fn map_veto_phase(
         Some(team) => {
             let curr_step_info = setup.veto_pick_order.get(setup.current_step).unwrap();
             if curr_step_info.team_role != team.role {
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|d| {
                             d.ephemeral(true)
@@ -798,7 +802,7 @@ async fn map_veto_phase(
                     setup.team_one.role
                 };
                 let next_map_name = &maps.iter().find(|m| m.id == first_map.map_id).unwrap().name;
-                mci.create_interaction_response(&context.discord(), |r| {
+                mci.create_interaction_response(&context.serenity_context(), |r| {
                     r.kind(InteractionResponseType::UpdateMessage)
                         .interaction_response_data(|d| {
                             d.content(format!(
@@ -844,7 +848,7 @@ async fn map_veto_phase(
                 })
                 .collect();
             let info_str = curr_series.veto_info(pool, Some(curr_vote_info)).await?;
-            mci.create_interaction_response(&context.discord(), |r| {
+            mci.create_interaction_response(&context.serenity_context(), |r| {
                 r.kind(InteractionResponseType::UpdateMessage)
                     .interaction_response_data(|d| {
                         d.content(format!(
@@ -953,7 +957,7 @@ pub fn create_sidepick_action_row() -> CreateActionRow {
 }
 
 async fn no_team_resp(context: &Context<'_>, mci: &Arc<MessageComponentInteraction>) {
-    mci.create_interaction_response(&context.discord(), |r| {
+    mci.create_interaction_response(&context.serenity_context(), |r| {
         r.kind(InteractionResponseType::ChannelMessageWithSource)
             .interaction_response_data(|d| {
                 d.ephemeral(true)
@@ -972,8 +976,8 @@ pub async fn start_server(
     current_match: &mut MatchSeries,
 ) -> Result<ServerDuplicateResponse, Error> {
     println!("{:#?}", setup);
-    mci.message.delete(&context.discord()).await?;
-    let mut msg = mci.channel_id.send_message(&context.discord(), |m| {
+    mci.message.delete(&context.serenity_context()).await?;
+    let mut msg = mci.channel_id.send_message(&context.serenity_context(), |m| {
         m.content("Match setup completed, starting server...\n[🌕🌑🌑🌑🌑]⏳ _Duplicating server template..._")
             .components(|c| c)
     }).await?;
@@ -1000,7 +1004,7 @@ pub async fn start_server(
         .json::<ServerDuplicateResponse>()
         .await?;
 
-    msg.edit(&context.discord(), |m| {
+    msg.edit(&context.serenity_context(), |m| {
         m.content("Match setup completed, starting server...\n[🌕🌕🌑🌑]⏳ _Setting GSLT token..._")
     })
     .await?;
@@ -1027,7 +1031,7 @@ pub async fn start_server(
         .send()
         .await?;
 
-    msg.edit(&context.discord(), |m| {
+    msg.edit(&context.serenity_context(), |m| {
         m.content(
             "Match setup completed, starting server...\n[🌕🌕🌕🌑]⏳ _Start server from match config..._",
         )
@@ -1105,7 +1109,7 @@ pub async fn start_server(
     )
     .await?;
 
-    msg.edit(&context.discord(), |m| {
+    msg.edit(&context.serenity_context(), |m| {
         m.content("Match setup completed, server started\n[🌕🌕🌕🌕]")
     })
     .await?;

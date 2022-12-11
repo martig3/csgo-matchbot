@@ -39,7 +39,7 @@ async fn main() {
     let framework = Framework::<_, Error>::builder()
         .options(FrameworkOptions {
             commands: vec![admin(), team(), steamid(), matches(), setup()],
-            listener: move |context, event, framework, _data| {
+            event_handler: move |context, event, framework, _data| {
                 Box::pin(async move {
                     if let Event::Ready { data_about_bot } = event {
                         let commands_builder =
@@ -71,9 +71,7 @@ async fn main() {
         })
         .token(var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
         .intents(GatewayIntents::empty())
-        .user_data_setup(move |_context, _ready, _framework| {
-            Box::pin(async move { Ok(Data { pool }) })
-        });
+        .setup(move |_context, _ready, _framework| Box::pin(async move { Ok(Data { pool }) }));
 
     if let Err(error) = framework.run().await {
         log::error!("Error: {}", error);
