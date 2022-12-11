@@ -1,0 +1,20 @@
+FROM postgres:alpine
+
+RUN apk add --no-cache \
+        clang \
+        gcc \
+        git \
+        libc-dev \
+        llvm13 \
+        make \
+        python3
+RUN cd /usr/src \
+ && git clone -b binary https://github.com/JohnPeel/pguint \
+ && cd /usr/src/pguint && make && make install
+
+FROM postgres:alpine
+
+COPY --from=0 /usr/local/lib/postgresql/uint.so /usr/local/lib/postgresql/
+COPY --from=0 /usr/local/share/postgresql/extension/uint* /usr/local/share/postgresql/extension/
+COPY --from=0 /usr/local/lib/postgresql/bitcode/uint/* /usr/local/lib/postgresql/bitcode/uint/
+ADD ./00-enable-pguint.sql /docker-entrypoint-initdb.d/

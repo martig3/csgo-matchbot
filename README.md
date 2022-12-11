@@ -4,50 +4,29 @@ Discord bot for managing & organizing team matches
 
 ## Features
 
-- Add matches to schedule
-- Schedule matches
+- Team management that integrates with Discord roles
 - Bo1, Bo3, Bo5 series map veto setup
-- Match setup history
+- Automated server setup via Dathost integration
+- Integration with [matchbot-api](https://github.com/martig3/matchbot-api) for other automated features
 
-### Example Screenshots
+## Usage
 
-// TODO
-
-### Commands
-
-`/setup` - start user's team's next match setup
-
-`/schedule` - schedule match
-
-`/matches` - list matches
-
-`/maps` - list maps
-
-`/help` - DMs you help text
-
-_These are privileged admin commands:_
-
-`/addmatch` - add match to schedule
-
-`/deletematch`- delete match from schedule
-
-`/cancel` - cancel setup
-
-### Setup
-
+Create `.env` file with the following fields:
 ```
-  DISCORD_TOKEN: <your discord bot api token>
-  DISCORD_ADMIN_ROLE_ID: <a discord server role id>
-  DISCORD_APPLICATION_ID: <bot application id>
-  DISCORD_GUILD_ID: <your guild id>
-  DATHOST_USER: <dathost username>
-  DATHOST_PASSWORD: <dathost password>
+DATABASE_URL=<db url i.e. postgres://postgres:postgres@localhost/matchbot>
+DISCORD_TOKEN=<discord token>
+STEAM_API_KEY=<steam web api key>
+MATCH_END_WEBHOOK_URL=<url, optional>
+ROUND_END_WEBHOOK_URL=<url, optional>
+DATHOST_USER=<dathost account username/email>
+DATHOST_PASSWORD=<dathost account password>
+BUCKET_URL=<optional, s3 bucket base url for match demos (see matchbot-api integration)>
 ```
 
-_Note: Channel & role ids can be found by enabling discord developer mode. It is also recommended to limit your bot to
-one channel via Server Settings>Integration options_
+### Docker
+`docker run --env-file .env -d ghcr.io/martig3/csgo-matchbot:latest`
+### Add bot to discord server
+Bot client id can be found under OAuth2 > General
 
-Start the bot via appropriate release binary (or clone & build yourself if you want) and navigate to the following url -
-make sure to insert your bot's client id in this url - to add the bot to your
-server: `https://discord.com/api/oauth2/authorize?client_id=<your_bot_clientid>&permissions=16780352&scope=bot`
+`https://discord.com/api/oauth2/authorize?client_id=<bot client id>&permissions=326685952000&scope=bot`
 
