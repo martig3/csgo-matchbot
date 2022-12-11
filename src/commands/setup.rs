@@ -318,9 +318,21 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
         return Ok(());
     }
     let mut current_match = current_match.unwrap();
+    if current_match.thread.is_some() {
+        context
+            .send(|m| {
+                m.ephemeral(true)
+                    .content("Your next match has already started `/setup`")
+            })
+            .await?;
+        return Ok(());
+    }
     if current_match.dathost_match.is_some() {
         context
-            .say("Your next match is already setup and in progress.")
+            .send(|m| {
+                m.ephemeral(true)
+                    .content("Your next match is already setup and in progress")
+            })
             .await?;
         return Ok(());
     }
@@ -386,6 +398,9 @@ pub(crate) async fn setup(context: Context<'_>) -> Result<()> {
             ));
             t
         })
+        .await?;
+    current_match
+        .update_thread(pool, thread.id.0.try_into().unwrap())
         .await?;
     let mut m = thread.say(context.discord(), "Starting setup...").await?;
     if setup.servers_remaining.len() > 2 {

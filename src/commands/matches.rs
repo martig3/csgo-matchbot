@@ -103,6 +103,7 @@ pub struct MatchSeries {
     pub dathost_match: Option<String>,
     pub created_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
+    pub thread: Option<i64>,
 }
 
 #[derive(Debug, FromRow)]
@@ -312,6 +313,16 @@ impl MatchSeries {
         let result = sqlx::query!(
             "UPDATE match_series SET dathost_match = $1 WHERE id = $2",
             dathost_match_id,
+            self.id
+        )
+        .execute(executor)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+    pub async fn update_thread(&self, executor: impl PgExecutor<'_>, thread: i64) -> Result<bool> {
+        let result = sqlx::query!(
+            "UPDATE match_series SET thread = $1 WHERE id = $2",
+            thread,
             self.id
         )
         .execute(executor)
