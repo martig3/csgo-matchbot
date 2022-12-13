@@ -1,6 +1,6 @@
 [package]
 name = "csgo-matchbot"
-version = "0.2.1"
+version = "0.2.3"
 edition = "2021"
 
 [dependencies]
@@ -9,7 +9,7 @@ dotenvy = "0.15.6"
 env_logger = "0.10.0"
 futures = "0.3.25"
 log = "0.4.17"
-reqwest = { version = "0.11.11", features = ["rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "json"] }
 urlencoding = "2.1.2"
 steamid = { git = "https://github.com/JohnPeel/steamid" }
 serenity = { version = "0.11.5", default-features = false, features = ["rustls_backend", "utils", "model"] }
