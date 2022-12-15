@@ -206,20 +206,6 @@ impl MatchScore {
         .fetch_all(executor)
         .await?)
     }
-    async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchScore>> {
-        Ok(sqlx::query_as!(
-            MatchScore,
-            "select ms.*
-                 from match_scores ms
-                    join match m on ms.match_id = m.id
-                    join match_series mts on m.match_series = mts.id
-                 where m.completed_at is null
-                     and mts.completed_at is null
-                 order by ms.id",
-        )
-        .fetch_all(executor)
-        .await?)
-    }
 }
 
 impl VoteInfo {
@@ -381,7 +367,7 @@ impl MatchSeries {
 
     async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<MatchSeries>> {
         Ok(sqlx::query_as(
-            "select ms.*
+            "select distinct ms.*
                  from match_series ms
                    join match m on m.match_series = ms.id
                    join match_scores mi on m.id = mi.match_id
@@ -469,22 +455,9 @@ impl Match {
             "select m.* from match_series ms \
                 join match m on m.match_series = ms.id \
                 where match_series = $1 \
+                order by m.id
                 ",
             match_series
-        )
-        .fetch_all(executor)
-        .await?)
-    }
-    async fn get_in_progress(executor: impl PgExecutor<'_>) -> Result<Vec<Match>> {
-        Ok(sqlx::query_as(
-            "select m.*
-                 from match_series ms
-                   join match m on m.match_series = ms.id
-                   join match_scores mi on m.id = mi.match_id
-                   join servers s on s.match_series = ms.id
-                 where ms.completed_at is null
-                   and m.completed_at is null
-                 ",
         )
         .fetch_all(executor)
         .await?)
@@ -540,52 +513,21 @@ pub(crate) async fn scheduled(context: Context<'_>) -> Result<()> {
 )]
 pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
-    let info = MatchScore::get_in_progress(pool).await?;
     let match_series = MatchSeries::get_in_progress(pool).await?;
-    let matches = Match::get_in_progress(pool).await?;
-    if match_series.is_empty() || info.is_empty() {
+    if match_series.is_empty() {
         context.say("No matches in progress were found").await?;
         return Ok(());
     }
     let servers = Server::get_live(pool).await?;
-    let mut teams = Vec::new();
-    for m in &match_series {
-        teams.push(Team::get(pool, m.team_one).await?);
-        teams.push(Team::get(pool, m.team_two).await?);
+    let mut resp_str = String::new();
+    for series in &match_series {
+        match series.series_type {
+            Bo1 => resp_str.push_str(&match_inprogress_info(pool, series, &servers).await?),
+            Bo3 => resp_str.push_str(&series_inprogress_info(pool, series, &servers).await?),
+            Bo5 => resp_str.push_str(&series_inprogress_info(pool, series, &servers).await?),
+        }
     }
-    let match_info: String = matches
-        .into_iter()
-        .map(|m| {
-            let mut s = String::new();
-            let m_info = info.iter().find(|i| i.match_id == m.id).unwrap();
-            let team_one_score = m_info.team_one_score;
-            let team_two_score = m_info.team_two_score;
-            let series = match_series
-                .iter()
-                .find(|ms| ms.id == m.match_series)
-                .unwrap();
-            let team_one_role = teams.iter().find(|t| t.id == series.team_one).unwrap().role;
-            let team_two_role = teams.iter().find(|t| t.id == series.team_two).unwrap().role;
-            let server = servers
-                .iter()
-                .find(|s| s.match_series == series.id)
-                .unwrap();
-            s.push_str(format!("`#{}` ", m.id).as_str());
-            s.push_str(format!("<@&{}> **`{}`**", &team_one_role, team_one_score).as_str());
-            s.push_str(" - ");
-            s.push_str(format!("**`{}`** <@&{}>", team_two_score, team_two_role).as_str());
-            s.push_str("\n - ");
-            s.push_str(
-                format!(
-                    "GOTV: ||`connect {}:{}`||\n",
-                    server.hostname, server.gotv_port
-                )
-                .as_str(),
-            );
-            s
-        })
-        .collect();
-    context.say(match_info).await?;
+    context.say(resp_str).await?;
     Ok(())
 }
 
@@ -776,4 +718,93 @@ pub fn get_series_score(scores: &Vec<MatchScore>, series_type: SeriesType) -> (i
             }),
     };
     (team_one_score, team_two_score)
+}
+
+async fn match_inprogress_info(
+    pool: &PgPool,
+    series: &MatchSeries,
+    servers: &Vec<Server>,
+) -> Result<String> {
+    let team_one_role = Team::get(pool, series.team_one).await?.role;
+    let team_two_role = Team::get(pool, series.team_two).await?.role;
+    let info = MatchScore::get_by_series(pool, series.id).await?;
+    let matches = Match::get_by_series(pool, series.id).await?;
+    let curr_match = matches.get(0).unwrap();
+    let curr_score = info
+        .iter()
+        .find(|score| score.match_id == curr_match.id)
+        .unwrap();
+    let server = servers
+        .iter()
+        .find(|s| s.match_series == series.id)
+        .unwrap();
+    let mut s = String::new();
+    s.push_str(format!("`#{}` ", series.id).as_str());
+    s.push_str(format!("<@&{}> `{}`", &team_one_role, curr_score.team_one_score).as_str());
+    s.push_str(" - ");
+    s.push_str(format!("`{}` <@&{}>", curr_score.team_two_score, &team_two_role).as_str());
+    s.push_str("\n - ");
+    s.push_str(
+        format!(
+            "GOTV: ||`connect {}:{}`||\n",
+            server.hostname, server.gotv_port
+        )
+        .as_str(),
+    );
+    Ok(s)
+}
+async fn series_inprogress_info(
+    pool: &PgPool,
+    series: &MatchSeries,
+    servers: &Vec<Server>,
+) -> Result<String> {
+    let team_one_role = Team::get(pool, series.team_one).await?.role;
+    let team_two_role = Team::get(pool, series.team_two).await?.role;
+    let info = MatchScore::get_by_series(pool, series.id).await?;
+    let matches = Match::get_by_series(pool, series.id).await?;
+    let completed: Vec<&Match> = matches
+        .iter()
+        .filter(|m| m.completed_at.is_some())
+        .collect();
+    let in_progress: Vec<&Match> = matches
+        .iter()
+        .filter(|m| m.completed_at.is_none())
+        .collect();
+    let series_score = if completed.len() > 0 {
+        completed.iter().fold((0, 0), |mut accum, item| {
+            let i = info.iter().find(|i| i.match_id == item.id).unwrap();
+            if i.team_one_score > i.team_two_score {
+                accum.0 += 1;
+            } else {
+                accum.1 += 1;
+            }
+            accum
+        })
+    } else {
+        (0, 0)
+    };
+    let curr_match = in_progress.get(0).unwrap();
+    let curr_score = info
+        .iter()
+        .find(|score| score.match_id == curr_match.id)
+        .unwrap();
+    let server = servers
+        .iter()
+        .find(|s| s.match_series == series.id)
+        .unwrap();
+    let mut s = String::new();
+    s.push_str(format!("`#{}` ", series.id).as_str());
+    s.push_str(format!("<@&{}> `{}`", &team_one_role, curr_score.team_one_score).as_str());
+    s.push_str(" - ");
+    s.push_str(format!("`{}` <@&{}>", curr_score.team_two_score, &team_two_role).as_str());
+    s.push_str(format!(" **({} - {})**", series_score.0, series_score.1).as_str());
+    s.push_str("\n - ");
+    s.push_str(
+        format!(
+            "GOTV: ||`connect {}:{}`||\n",
+            server.hostname, server.gotv_port
+        )
+        .as_str(),
+    );
+    Ok(s)
 }
