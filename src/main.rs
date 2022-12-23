@@ -5,6 +5,7 @@ use crate::commands::matches::matches;
 use crate::commands::setup::setup;
 use crate::commands::steamid::steamid;
 use crate::commands::team::team;
+use crate::commands::team::teams;
 use anyhow::Error;
 use dotenvy::{dotenv, var};
 use poise::{builtins::create_application_commands, Event, Framework, FrameworkOptions};
@@ -38,7 +39,7 @@ async fn main() {
 
     let framework = Framework::<_, Error>::builder()
         .options(FrameworkOptions {
-            commands: vec![admin(), team(), steamid(), matches(), setup()],
+            commands: vec![admin(), team(), teams(), steamid(), matches(), setup()],
             event_handler: move |context, event, framework, _data| {
                 Box::pin(async move {
                     if let Event::Ready { data_about_bot } = event {
