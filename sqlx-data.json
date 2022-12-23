@@ -113,42 +113,6 @@
     },
     "query": "DELETE FROM team_members WHERE team = $1 AND member = $2"
   },
-  "19219e7be17b7f88be1b7d3ebe475e4260b5c09fa8669453a627c76e7ca75ae1": {
-    "describe": {
-      "columns": [
-        {
-          "name": "id",
-          "ordinal": 0,
-          "type_info": "Int4"
-        },
-        {
-          "name": "match_id",
-          "ordinal": 1,
-          "type_info": "Int4"
-        },
-        {
-          "name": "team_one_score",
-          "ordinal": 2,
-          "type_info": "Int4"
-        },
-        {
-          "name": "team_two_score",
-          "ordinal": 3,
-          "type_info": "Int4"
-        }
-      ],
-      "nullable": [
-        false,
-        false,
-        false,
-        false
-      ],
-      "parameters": {
-        "Left": []
-      }
-    },
-    "query": "select ms.*\n                 from match_scores ms\n                    join match m on ms.match_id = m.id\n                    join match_series mts on m.match_series = mts.id\n                 where m.completed_at is null\n                     and mts.completed_at is null\n                 order by ms.id"
-  },
   "1cff6d0b7c05f2befe3826ac6d6d65b9642d299340e4cc1643b52b4a2ce09e54": {
     "describe": {
       "columns": [],
@@ -394,6 +358,62 @@
     },
     "query": "DELETE FROM match_series where id = $1"
   },
+  "8fbbc4bc6bf57bfe5f6cf96a5559d07f5ade67bc30db35234f85fb4c3845516a": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "match_series",
+          "ordinal": 1,
+          "type_info": "Int4"
+        },
+        {
+          "name": "map",
+          "ordinal": 2,
+          "type_info": "Int4"
+        },
+        {
+          "name": "picked_by",
+          "ordinal": 3,
+          "type_info": "Int4"
+        },
+        {
+          "name": "start_ct_team",
+          "ordinal": 4,
+          "type_info": "Int4"
+        },
+        {
+          "name": "start_t_team",
+          "ordinal": 5,
+          "type_info": "Int4"
+        },
+        {
+          "name": "completed_at",
+          "ordinal": 6,
+          "type_info": "Timestamptz"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Int4"
+        ]
+      }
+    },
+    "query": "select m.* from match_series ms join match m on m.match_series = ms.id where match_series = $1 order by m.id\n                "
+  },
   "a089a138eda08751e329768ac92fdbd725f34e2e61f1da2d4d6d5915a356fb44": {
     "describe": {
       "columns": [
@@ -624,62 +644,6 @@
       }
     },
     "query": "UPDATE match_series SET thread = $1 WHERE id = $2"
-  },
-  "ee7f4a642e3eea9fce25d700f0c9b4c617ea556e4952253499a51120cdce315a": {
-    "describe": {
-      "columns": [
-        {
-          "name": "id",
-          "ordinal": 0,
-          "type_info": "Int4"
-        },
-        {
-          "name": "match_series",
-          "ordinal": 1,
-          "type_info": "Int4"
-        },
-        {
-          "name": "map",
-          "ordinal": 2,
-          "type_info": "Int4"
-        },
-        {
-          "name": "picked_by",
-          "ordinal": 3,
-          "type_info": "Int4"
-        },
-        {
-          "name": "start_ct_team",
-          "ordinal": 4,
-          "type_info": "Int4"
-        },
-        {
-          "name": "start_t_team",
-          "ordinal": 5,
-          "type_info": "Int4"
-        },
-        {
-          "name": "completed_at",
-          "ordinal": 6,
-          "type_info": "Timestamptz"
-        }
-      ],
-      "nullable": [
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        true
-      ],
-      "parameters": {
-        "Left": [
-          "Int4"
-        ]
-      }
-    },
-    "query": "select m.* from match_series ms join match m on m.match_series = ms.id where match_series = $1 "
   },
   "fa8ab8ca8ad360500b9a33f7fc2ac8198f8f750933f9529d1e3d52358d1c69cc": {
     "describe": {
