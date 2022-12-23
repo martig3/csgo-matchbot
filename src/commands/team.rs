@@ -127,6 +127,20 @@ impl Team {
             .await?;
         Ok(result.rows_affected() == 1)
     }
+    pub async fn format_team_str(&self, mut members: Vec<i64>) -> String {
+        members.retain(|member| *member != self.capitan as i64);
+
+        let capitan = format!("<@{capitan}>", capitan = self.capitan);
+        let members = members
+            .into_iter()
+            .map(|member| format!("<@{member}>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "Team <@&{role}>\n\tCapitan: {capitan}\n\tMembers: {members}",
+            role = self.role
+        )
+    }
 }
 
 async fn create_team(pool: &PgPool, role: u64, name: impl AsRef<str>, capitan: u64) -> Result<()> {
@@ -143,6 +157,35 @@ async fn create_team(pool: &PgPool, role: u64, name: impl AsRef<str>, capitan: u
     subcommands("create", "show", "leave", "invite", "kick")
 )]
 pub(crate) async fn team(_context: Context<'_>) -> Result<()> {
+    Ok(())
+}
+
+#[command(slash_command, guild_only, subcommands("all"))]
+pub(crate) async fn teams(_context: Context<'_>) -> Result<()> {
+    Ok(())
+}
+
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    description_localized("en-US", "Show all teams")
+)]
+pub(crate) async fn all(context: Context<'_>) -> Result<()> {
+    let pool = &context.data().pool;
+    let teams = Team::get_all(pool).await?;
+    if teams.is_empty() {
+        context.say("No teams found.").await?;
+        return Ok(());
+    }
+    let mut all_teams = String::new();
+    for (i, team) in teams.iter().enumerate() {
+        let members = team.members(pool).await?;
+        all_teams.push_str(format!("{}. ", i + 1).as_str());
+        all_teams.push_str(team.format_team_str(members).await.as_str());
+        all_teams.push_str("\n");
+    }
+    context.say(all_teams).await?;
     Ok(())
 }
 
@@ -218,7 +261,7 @@ pub(crate) async fn create(
     slash_command,
     guild_only,
     ephemeral,
-    description_localized("en-US", "Show a team's roster")
+    description_localized("en-US", "Show your team's roster")
 )]
 pub(crate) async fn show(
     context: Context<'_>,
@@ -245,22 +288,10 @@ pub(crate) async fn show(
         },
     };
 
-    let mut members = team.members(pool).await?;
-    members.retain(|member| *member != team.capitan as i64);
+    let members = team.members(pool).await?;
+    let team_str = team.format_team_str(members).await;
 
-    let capitan = format!("<@{capitan}>", capitan = team.capitan);
-    let members = members
-        .into_iter()
-        .map(|member| format!("<@{member}>"))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    context
-        .say(format!(
-            "Team <@&{role}>\n\tCapitan: {capitan}\n\tMembers: {members}",
-            role = team.role
-        ))
-        .await?;
+    context.say(team_str).await?;
     Ok(())
 }
 
