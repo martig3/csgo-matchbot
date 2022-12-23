@@ -13,7 +13,7 @@ Discord bot for managing & organizing team matches
 
 Create `.env` file with the following fields:
 
-```
+```env
 DATABASE_URL=<db url i.e. postgres://postgres:postgres@localhost/matchbot>
 DISCORD_TOKEN=<discord token>
 STEAM_API_KEY=<steam web api key>
