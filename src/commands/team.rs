@@ -137,7 +137,7 @@ impl Team {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "Team <@&{role}>\n\tCapitan: {capitan}\n\tMembers: {members}",
+            "Team <@&{role}>\n\tCaptain: {capitan}\n\tMembers: {members}",
             role = self.role
         )
     }
@@ -380,7 +380,7 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
 
     // Author is team capitan
     if author.id.0 != team.capitan as u64 {
-        context.say("You are not the capitan of this team!").await?;
+        context.say("You are not the captain of this team!").await?;
         return Ok(());
     }
 
@@ -499,7 +499,7 @@ pub(crate) async fn kick(context: Context<'_>, user: User) -> Result<()> {
 
     // Author is team capitan
     if author.id.0 != team.capitan as u64 {
-        context.say("You are not the capitan of this team!").await?;
+        context.say("You are not the captain of this team!").await?;
         return Ok(());
     }
 
@@ -567,7 +567,7 @@ pub(crate) async fn transfer(
 
     // Author is team capitan
     if author.id.0 != team.capitan as u64 {
-        context.say("You are not the capitan of this team!").await?;
+        context.say("You are not the captain of this team!").await?;
         return Ok(());
     }
 

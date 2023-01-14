@@ -467,7 +467,7 @@ impl Match {
 #[command(
     slash_command,
     guild_only,
-    subcommands("scheduled", "inprogress", "completed", "find")
+    subcommands("scheduled", "inprogress", "completed", "info")
 )]
 pub(crate) async fn matches(_context: Context<'_>) -> Result<()> {
     Ok(())
@@ -570,7 +570,7 @@ pub(crate) async fn completed(context: Context<'_>) -> Result<()> {
     ephemeral,
     description_localized("en-US", "Show info for a match")
 )]
-pub(crate) async fn find(
+pub(crate) async fn info(
     context: Context<'_>,
     #[description = "Match number"] match_id: i32,
 ) -> Result<()> {
