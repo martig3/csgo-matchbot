@@ -1223,7 +1223,7 @@ pub async fn start_series_match(
     params.insert("enable_tech_pause", "true");
     params.insert("match_end_webhook_url", &&match_end_webhook_url);
     params.insert("round_end_webhook_url", &&round_end_webhook_url);
-    params.insert("series_end_webhook_url", &&series_end_webhook_url);
+    params.insert("match_series_end_webhook_url", &&series_end_webhook_url);
     params.insert("team1_name", team_one_name.as_str());
     params.insert("team2_name", team_two_name.as_str());
     params.insert("team1_steam_ids", team_one.as_str());
