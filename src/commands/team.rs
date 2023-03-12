@@ -1,155 +1,9 @@
 use super::super::Context;
 use crate::commands::steamid::SteamUser;
 use anyhow::{Error, Result};
+use matchbot_core::team::*;
 use poise::command;
 use serenity::model::{application::component::ButtonStyle, id::RoleId, user::User};
-use sqlx::{FromRow, PgExecutor, PgPool};
-
-#[allow(unused)]
-#[derive(Debug, Clone, FromRow)]
-pub struct Team {
-    pub id: i32,
-    pub role: i64,
-    pub name: String,
-    pub capitan: i64,
-}
-
-#[allow(unused)]
-impl Team {
-    pub async fn create(
-        executor: impl PgExecutor<'_>,
-        role: i64,
-        name: &str,
-        capitan: i64,
-    ) -> Result<Team> {
-        Ok(sqlx::query_as!(
-            Team,
-            "INSERT INTO teams
-                        (role, name, capitan)
-                    VALUES
-                        ($1, $2, $3)
-                    RETURNING *",
-            role,
-            name,
-            capitan
-        )
-        .fetch_one(executor)
-        .await?)
-    }
-
-    pub async fn get(executor: impl PgExecutor<'_>, id: i32) -> Result<Team> {
-        Ok(
-            sqlx::query_as!(Team, "SELECT * FROM TEAMS where id = $1", id)
-                .fetch_one(executor)
-                .await?,
-        )
-    }
-
-    pub async fn get_all(executor: impl PgExecutor<'_>) -> Result<Vec<Team>> {
-        Ok(sqlx::query_as!(Team, "SELECT * FROM TEAMS",)
-            .fetch_all(executor)
-            .await?)
-    }
-
-    pub async fn delete(executor: impl PgExecutor<'_>, team: i32) -> Result<bool> {
-        let result = sqlx::query!("DELETE FROM teams WHERE id = $1", team)
-            .execute(executor)
-            .await?;
-
-        Ok(result.rows_affected() == 1)
-    }
-
-    pub async fn add_member(executor: impl PgExecutor<'_>, team: i32, member: i64) -> Result<bool> {
-        let result = sqlx::query!(
-            "INSERT INTO team_members (team, member) VALUES ($1, $2)",
-            team,
-            member
-        )
-        .execute(executor)
-        .await?;
-
-        Ok(result.rows_affected() == 1)
-    }
-
-    pub async fn remove_member(
-        executor: impl PgExecutor<'_>,
-        team: i32,
-        member: i64,
-    ) -> Result<bool> {
-        let result = sqlx::query!(
-            "DELETE FROM team_members WHERE team = $1 AND member = $2",
-            team,
-            member
-        )
-        .execute(executor)
-        .await?;
-
-        Ok(result.rows_affected() == 1)
-    }
-
-    pub async fn get_by_role(executor: impl PgExecutor<'_>, role: i64) -> Result<Option<Team>> {
-        Ok(
-            sqlx::query_as!(Team, "SELECT * FROM teams WHERE role = $1", role)
-                .fetch_optional(executor)
-                .await?,
-        )
-    }
-
-    pub async fn get_by_member(executor: impl PgExecutor<'_>, member: i64) -> Result<Option<Team>> {
-        Ok(sqlx::query_as!(
-            Team,
-            "SELECT teams.*
-                     FROM team_members
-                     JOIN teams
-                        ON team_members.team = teams.id
-                     WHERE team_members.member = $1",
-            member
-        )
-        .fetch_optional(executor)
-        .await?)
-    }
-
-    pub async fn members(&self, executor: impl PgExecutor<'_>) -> Result<Vec<i64>> {
-        Ok(
-            sqlx::query_scalar!("SELECT member FROM team_members WHERE team = $1", self.id)
-                .fetch_all(executor)
-                .await?,
-        )
-    }
-
-    pub async fn update_capitan(
-        executor: impl PgExecutor<'_>,
-        team: i32,
-        member: i64,
-    ) -> Result<bool> {
-        let result = sqlx::query!("UPDATE teams SET capitan = $1 WHERE id = $2", member, team)
-            .execute(executor)
-            .await?;
-        Ok(result.rows_affected() == 1)
-    }
-    pub async fn format_team_str(&self, mut members: Vec<i64>) -> String {
-        members.retain(|member| *member != self.capitan as i64);
-
-        let capitan = format!("<@{capitan}>", capitan = self.capitan);
-        let members = members
-            .into_iter()
-            .map(|member| format!("<@{member}>"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "Team <@&{role}>\n\tCaptain: {capitan}\n\tMembers: {members}",
-            role = self.role
-        )
-    }
-}
-
-async fn create_team(pool: &PgPool, role: u64, name: impl AsRef<str>, capitan: u64) -> Result<()> {
-    let mut transaction = pool.begin().await?;
-    let team = Team::create(&mut transaction, role as i64, name.as_ref(), capitan as i64).await?;
-    Team::add_member(&mut transaction, team.id, capitan as i64).await?;
-    transaction.commit().await?;
-    Ok(())
-}
 
 #[command(
     slash_command,
@@ -220,10 +74,10 @@ pub(crate) async fn create(
 
     // User does not have a team
     if let Some(team) = Team::get_by_member(pool, author.0 as i64).await? {
-        if team.capitan == author.0 as i64 {
+        if team.captain == author.0 as i64 {
             context
                 .say(format!(
-                    "You are already the capitan of the <@&{role}> team!",
+                    "You are already the captain of the <@&{role}> team!",
                     role = team.role
                 ))
                 .await?;
@@ -320,10 +174,10 @@ pub(crate) async fn leave(context: Context<'_>) -> Result<()> {
     let members = team.members(pool).await?;
 
     let member_vec: Vec<u64> = members.clone().into_iter().map(|n| n as u64).collect();
-    // User is not team capitan OR is only member
-    if author.0 == team.capitan as u64 && [author.0] != member_vec.as_slice() {
+    // User is not team captain OR is only member
+    if author.0 == team.captain as u64 && [author.0] != member_vec.as_slice() {
         context
-            .say("A capitan cannot leave a team while it has members!")
+            .say("A captain cannot leave a team while it has members!")
             .await?;
         return Ok(());
     }
@@ -378,8 +232,8 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
         Some(team) => team,
     };
 
-    // Author is team capitan
-    if author.id.0 != team.capitan as u64 {
+    // Author is team captain
+    if author.id.0 != team.captain as u64 {
         context.say("You are not the captain of this team!").await?;
         return Ok(());
     }
@@ -497,8 +351,8 @@ pub(crate) async fn kick(context: Context<'_>, user: User) -> Result<()> {
         Some(team) => team,
     };
 
-    // Author is team capitan
-    if author.id.0 != team.capitan as u64 {
+    // Author is team captain
+    if author.id.0 != team.captain as u64 {
         context.say("You are not the captain of this team!").await?;
         return Ok(());
     }
@@ -565,8 +419,8 @@ pub(crate) async fn transfer(
         Some(team) => team,
     };
 
-    // Author is team capitan
-    if author.id.0 != team.capitan as u64 {
+    // Author is team captain
+    if author.id.0 != team.captain as u64 {
         context.say("You are not the captain of this team!").await?;
         return Ok(());
     }
@@ -586,7 +440,7 @@ pub(crate) async fn transfer(
         return Ok(());
     }
 
-    Team::update_capitan(pool, team.id, user.id.0 as i64).await?;
+    Team::update_captain(pool, team.id, user.id.0 as i64).await?;
 
     let mut member = guild.member(context.serenity_context(), user.id).await?;
     member

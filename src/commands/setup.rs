@@ -20,11 +20,11 @@ use serenity::model::prelude::interaction::InteractionResponseType;
 use crate::commands::admin::ServerTemplates;
 use crate::commands::maps::Map;
 use crate::commands::steamid::SteamUser;
-use crate::commands::team::Team;
 use matchbot_core::matches::VoteType::{Pick, Veto};
 use matchbot_core::matches::{
     Match, MatchScore, MatchSeries, NewMatch, SeriesType, Server, VoteInfo, VoteType,
 };
+use matchbot_core::team::Team;
 
 use sqlx::PgPool;
 use steamid::{SteamId, Universe};

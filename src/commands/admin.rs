@@ -1,13 +1,16 @@
 use std::str::FromStr;
 
 use super::super::Context;
-use anyhow::Result;
+use anyhow::{Error, Result};
 use futures::{Stream, StreamExt};
 use matchbot_core::matches::{MatchSeries, SeriesType};
 use poise::command;
+use poise::serenity_prelude::{CacheHttp, RoleId};
+use sqlx::types::time::OffsetDateTime;
 use strum::IntoEnumIterator;
 
-use crate::commands::team::Team;
+use matchbot_core::team::Team;
+use matchbot_core::tournament::*;
 use serenity::model::guild::Role;
 use sqlx::sqlx_macros::FromRow;
 use sqlx::PgExecutor;
@@ -62,7 +65,7 @@ async fn series_types<'a>(_ctx: Context<'_>, partial: &'a str) -> impl Stream<It
     guild_only,
     ephemeral,
     default_member_permissions = "MODERATE_MEMBERS",
-    subcommands("matches", "servers")
+    subcommands("matches", "servers", "tournament")
 )]
 pub(crate) async fn admin(_context: Context<'_>) -> Result<()> {
     Ok(())
@@ -76,6 +79,17 @@ pub(crate) async fn admin(_context: Context<'_>) -> Result<()> {
     subcommands("add_match", "delete_match")
 )]
 pub(crate) async fn matches(_context: Context<'_>) -> Result<()> {
+    Ok(())
+}
+
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MODERATE_MEMBERS",
+    subcommands("add_tournament", "end_tournament")
+)]
+pub(crate) async fn tournament(_context: Context<'_>) -> Result<()> {
     Ok(())
 }
 
@@ -160,11 +174,19 @@ pub(crate) async fn add_match(
     let series_type_enum = SeriesType::from_str(&series_type).unwrap();
     let team_one = Team::get_by_role(pool, team_one.id.0 as i64).await?;
     let team_two = Team::get_by_role(pool, team_two.id.0 as i64).await?;
+    let Some(current_tournament) = Tournament::get_current(pool).await? else {
+        context
+            .say("There is no active tournament, use `/admin tournament new` to create one.")
+            .await?;
+        return Ok(());
+    };
+
     let result = MatchSeries::create(
         pool,
         team_one.unwrap().id,
         team_two.unwrap().id,
         series_type_enum,
+        current_tournament,
     );
     if let Err(err) = result.await {
         log::error!("{:#?}", err);
@@ -197,4 +219,80 @@ pub(crate) async fn delete_match(
     }
     context.say("Match successfully deleted").await?;
     return Ok(());
+}
+
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "new",
+    description_localized("en-US", "Create new tournament")
+)]
+pub(crate) async fn add_tournament(
+    context: Context<'_>,
+    #[description = "Name"] name: String,
+    #[description = "Start date YYYY-MM-DD"] start_date: String,
+) -> Result<()> {
+    let pool = &context.data().pool;
+    let current = Tournament::get_current(pool).await?;
+    if current.is_some() {
+        context
+            .say("There is an active tournament, use `/admin tournament end` to end it first.")
+            .await?;
+        return Ok(());
+    }
+    let date_format = time::macros::format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]:[offset_second]"
+    );
+    let started_at = OffsetDateTime::parse(
+        format!("{} 00:00:00 +00:00:00", &start_date).as_str(),
+        date_format,
+    );
+    let Ok(started_at) = started_at else {
+        context
+            .say("Invalid start date format, please use YYYY-MM-DD")
+            .await?;
+        return Ok(());
+    };
+    let new_tournament = Tournament {
+        id: 0,
+        name,
+        started_at,
+        completed_at: None,
+    };
+
+    new_tournament.create(pool).await?;
+
+    context.say("Created new tournament.").await?;
+    Ok(())
+}
+
+#[command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "end",
+    description_localized("en-US", "End active tournament")
+)]
+pub(crate) async fn end_tournament(context: Context<'_>) -> Result<()> {
+    let pool = &context.data().pool;
+    let current = Tournament::get_current(pool).await?;
+    if current.is_none() {
+        context
+            .say("There is no active tournament, use `/admin tournament new` to start a new tournament.")
+            .await?;
+        return Ok(());
+    }
+    let guild = context
+        .guild_id()
+        .ok_or_else::<Error, _>(|| unreachable!())?;
+    let teams = Team::get_all(pool).await?;
+    for team in teams {
+        guild
+            .delete_role(context.http(), RoleId(team.role as u64))
+            .await?;
+        team.set_inactive(pool).await?;
+    }
+    context.say("Tournament ended.").await?;
+    Ok(())
 }

@@ -89,7 +89,7 @@ pub(crate) async fn inprogress(context: Context<'_>) -> Result<()> {
 )]
 pub(crate) async fn completed(context: Context<'_>) -> Result<()> {
     let pool = &context.data().pool;
-    let matches = MatchSeries::get_all(pool, 20, true).await?;
+    let matches = MatchSeries::get_all(pool, 20, true, None).await?;
     if matches.is_empty() {
         context.say("No matches were found").await?;
         return Ok(());
