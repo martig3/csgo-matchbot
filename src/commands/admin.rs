@@ -1,15 +1,16 @@
+use std::str::FromStr;
+
 use super::super::Context;
-use crate::commands::matches::{MatchSeries, SeriesType};
 use anyhow::Result;
 use futures::{Stream, StreamExt};
+use matchbot_core::matches::{MatchSeries, SeriesType};
 use poise::command;
-use std::str::FromStr;
+use strum::IntoEnumIterator;
 
 use crate::commands::team::Team;
 use serenity::model::guild::Role;
 use sqlx::sqlx_macros::FromRow;
 use sqlx::PgExecutor;
-use strum::IntoEnumIterator;
 
 #[derive(Debug, FromRow, Clone)]
 pub struct ServerTemplates {
@@ -152,7 +153,7 @@ pub(crate) async fn show_servers(context: Context<'_>) -> Result<()> {
 pub(crate) async fn add_match(
     context: Context<'_>,
     #[description = "Team One (Higher Seed)"] team_one: Role,
-    #[description = "Team One (Lower Seed)"] team_two: Role,
+    #[description = "Team Two (Lower Seed)"] team_two: Role,
     #[autocomplete = "series_types"] series_type: String,
 ) -> Result<()> {
     let pool = &context.data().pool;

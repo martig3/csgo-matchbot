@@ -1,6 +1,6 @@
-use crate::commands::matches::SeriesType::{Bo1, Bo3, Bo5};
 use crate::Context;
 use anyhow::{Error, Result};
+use matchbot_core::matches::SeriesType::{Bo1, Bo3, Bo5};
 use poise::command;
 use poise::futures_util::StreamExt;
 use reqwest::{Client, Response};
@@ -19,12 +19,12 @@ use serenity::model::prelude::interaction::InteractionResponseType;
 
 use crate::commands::admin::ServerTemplates;
 use crate::commands::maps::Map;
-use crate::commands::matches::VoteType::{Pick, Veto};
-use crate::commands::matches::{
-    Match, MatchScore, MatchSeries, NewMatch, SeriesType, Server, VoteInfo, VoteType,
-};
 use crate::commands::steamid::SteamUser;
 use crate::commands::team::Team;
+use matchbot_core::matches::VoteType::{Pick, Veto};
+use matchbot_core::matches::{
+    Match, MatchScore, MatchSeries, NewMatch, SeriesType, Server, VoteInfo, VoteType,
+};
 
 use sqlx::PgPool;
 use steamid::{SteamId, Universe};
