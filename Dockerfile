@@ -1,5 +1,6 @@
 FROM rust:alpine AS build
 
+ENV SQLX_OFFLINE true
 RUN apk add --no-cache build-base openssl-dev libpq-dev && mkdir -p /app
 COPY . /app
 WORKDIR /app
