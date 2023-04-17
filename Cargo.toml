@@ -4,6 +4,7 @@ version = "0.4.0"
 edition = "2021"
 
 [dependencies]
+matchbot_core =  { git = "https://github.com/martig3/matchbot-core" }
 anyhow = "1.0.66"
 chrono = "*"
 dotenvy = "0.15.6"
@@ -23,4 +24,3 @@ time = { version = "0.3.20", features = ["parsing"]}
 tokio = { version = "1.23.0", features = ["full"] }
 strum = { version = "0.24", features = ["derive"] }
 strum_macros = "0.24.3"
-matchbot_core =  { path = "../matchbot-core" }
