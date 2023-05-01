@@ -1,10 +1,12 @@
-use crate::Data;
-use anyhow::{Error, Result};
+use anyhow::Result;
 use log::error;
+use poise::command;
 use poise::Modal;
-use poise::{command, ApplicationContext};
+use regex::Regex;
 use sqlx::{FromRow, PgExecutor};
 use steamid::{AccountType, Instance, SteamId, Universe};
+
+use crate::Context;
 
 trait ParseWithDefaults: Sized {
     fn parse<S: AsRef<str>>(value: S) -> Result<Self>;
@@ -78,39 +80,36 @@ impl SteamUser {
 #[command(
     slash_command,
     guild_only,
+    ephemeral,
     description_localized("en-US", "Set your SteamID")
 )]
-pub(crate) async fn steamid(context: ApplicationContext<'_, Data, Error>) -> Result<()> {
-    let data: SteamIDModal = SteamIDModal::execute(context).await.unwrap().unwrap();
-    let steamid_str = data.steamid.trim();
-    let steamid64 = SteamId::parse(steamid_str);
+pub(crate) async fn steamid(
+    context: Context<'_>,
+    #[description = "Your SteamID"] steamid: String,
+) -> Result<()> {
+    let steam_id_regex = Regex::new("^STEAM_[0-5]:[01]:\\d+$").unwrap();
+    if !steam_id_regex.is_match(&steamid) {
+        context
+            .say("Invalid SteamId format. SteamIds must follow this format: `STEAM_0:1:12345678`")
+            .await?;
+        return Ok(());
+    }
+    let steamid64 = SteamId::parse(&steamid);
     let Ok(steamid64) = steamid64 else {
-        error!("Error parsing '{}'", steamid_str);
-        context.interaction
-        .unwrap()
-        .create_followup_message(
-        &context.serenity_context.http,
-        |m| m
-                .ephemeral(true)
-                .content(format!("Error parsing steamid '{}', contact an admin", steamid_str)))
-        .await?;
+        error!("Error parsing '{}'", &steamid);
+        context.say(format!("Error parsing steamid '{}', contact an admin", steamid)).await?;
         return Ok(());
     };
+    let pool = &context.data().pool;
     SteamUser::add(
-        &context.data.pool,
-        context.interaction.user().id.0 as i64,
+        pool,
+        context.author().id.0 as i64,
         u64::from(steamid64) as i64,
     )
     .await?;
-    context.interaction
-            .unwrap()
-            .create_followup_message(
-            &context.serenity_context.http,
-            |m| m
-                    .ephemeral(true)
-                    .content(format!("Your steamID has been set to the following Steam account: {} \
+    context.say(format!("Your SteamID has been set to the following Steam account: {} \
                                 \nPlease verify this is the account you will be playing on, otherwise you will not be able to join a match server!",
-                                     steamid64.community_link())))
+                                     steamid64.community_link()))
             .await?;
     Ok(())
 }
