@@ -252,8 +252,8 @@ pub(crate) async fn invite(context: Context<'_>, user: User) -> Result<()> {
         .dm(context.serenity_context(), |message| {
             message
                 .content(format!(
-                    "You have been invited to join the <@&{}> team by <@{}>!",
-                    team.role, author.id
+                    "You have been invited to join team '{}' by <@{}>!",
+                    team.name, author.id
                 ))
                 .components(|components| {
                     components.create_action_row(|row| {
